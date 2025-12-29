@@ -1,0 +1,9 @@
+venv/
+.env
+__pycache__/
+chroma_db/
+*.pyc
+.git
+.gitignore
+test_mission.py
+test-tools/

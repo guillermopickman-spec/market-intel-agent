@@ -1,0 +1,1070 @@
+# 1: .dockerignore
+venv/
+.env
+__pycache__/
+chroma_db/
+*.pyc
+.git
+.gitignore
+test_mission.py
+test-tools/
+
+# 2: Dockerfile
+# Use an official Python slim image for a small footprint
+FROM python:3.11-slim
+
+# Prevent Python from writing .pyc files and buffer logs
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+# Set the working directory
+WORKDIR /app
+
+# Install system dependencies
+# We only need build-essential and libpq-dev for database drivers
+# curl is kept for health checks if needed
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    libpq-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements first to leverage Docker layer caching
+COPY requirements.txt .
+
+# Install Python dependencies
+# --no-cache-dir keeps the image slim
+RUN pip install --no-cache-dir -r requirements.txt
+
+# Install Playwright and its system-level dependencies
+# These are still required for the scraper_service.py
+RUN pip install playwright && \
+    playwright install chromium && \
+    playwright install-deps chromium
+
+# --- REMOVED: LOCAL MODEL DOWNLOAD ---
+# We no longer need to pre-download or create /app/local_cache 
+# as we are moving to the Hugging Face Inference API.
+
+# Copy the rest of your application code
+COPY . .
+
+# Expose the port (Render uses the $PORT env var, but we'll expose 8000 as a default)
+EXPOSE 8000
+
+# Command to run the application
+# Using the list format allows for proper signal handling (graceful shutdown)
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+# 3: database.py
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker, DeclarativeBase
+from core.settings import settings
+
+# Use a default sqlite if DATABASE_URL is missing for local testing
+SQLALCHEMY_DATABASE_URL = settings.DATABASE_URL or "sqlite:///./test.db"
+
+engine = create_engine(
+    SQLALCHEMY_DATABASE_URL, 
+    connect_args={"check_same_thread": False} if "sqlite" in SQLALCHEMY_DATABASE_URL else {}
+)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
+
+class Base(DeclarativeBase):
+    pass
+
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# 4: main.py
+import sys
+import asyncio
+from fastapi import FastAPI
+from dotenv import load_dotenv
+
+# --- 1. OS COMPATIBILITY PATCH ---
+# Only use Proactor on Windows; Linux (Render) uses the default loop.
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+load_dotenv()
+
+# Import DB components after load_dotenv
+from database import engine, Base
+import models  
+
+# Create tables (SQLAlchemy handles "if not exists" automatically)
+try:
+    Base.metadata.create_all(bind=engine)
+    print("✅ Database initialized successfully.")
+except Exception as e:
+    print(f"❌ Database error during startup: {e}")
+
+from routers.documents import router as documents_router
+from routers.chat import router as chat_router
+from routers.agent import router as agent_router
+
+app = FastAPI(
+    title="Market Intelligence Agent API",
+    version="1.0.0"
+)
+
+app.include_router(documents_router, prefix="/documents", tags=["RAG"])
+app.include_router(chat_router, prefix="/chat", tags=["Chat"])
+app.include_router(agent_router, prefix="/agent", tags=["Agent"])
+
+@app.get("/")
+def read_root():
+    return {"status": "active", "platform": sys.platform}
+
+@app.get("/health")
+def health_check():
+    return {"status": "healthy"}
+
+# 5: chroma\__init__.py
+
+
+# 6: chroma\client.py
+import chromadb
+
+def get_chroma_client():
+    return chromadb.Client()
+
+# 7: chroma\collection.py
+import chromadb
+import os
+
+def get_collection():
+    # Creamos la carpeta si no existe
+    db_path = os.path.join(os.getcwd(), "chroma_db")
+    
+    # Usamos PersistentClient para que los datos se guarden en disco
+    client = chromadb.PersistentClient(path=db_path)
+    
+    # Nombre único para todo el proyecto
+    return client.get_or_create_collection(name="document_store")
+
+# 8: core\__init__.py
+
+
+# 9: core\prompts.py
+# core/prompts.py
+AGENT_SYSTEM_PROMPT = (
+    "You are an Autonomous Market Intelligence Agent. "
+    "Your goal is to complete missions using the following tools.\n\n"
+    "AVAILABLE TOOLS:\n"
+    "1. web_research: Arguments: {'url': 'string'}. Scrapes text from a website.\n"
+    "2. save_to_notion: Arguments: {'title': 'string', 'content': 'string'}. Saves data.\n"
+    "3. dispatch_email: Arguments: {'to_email': 'string', 'subject': 'string', 'content': 'string'}. Sends email.\n"
+    "4. none: No arguments. Use only when the mission is 100% complete.\n\n"
+    "RESPONSE RULES:\n"
+    "- You must respond ONLY with a JSON object.\n"
+    "- Do not include any text before or after the JSON.\n"
+    "- If you need to search, you MUST provide the 'url' inside the 'args' key.\n\n"
+    "JSON STRUCTURE EXAMPLE:\n"
+    "{\n"
+    "  \"thought\": \"I need to find the CEO of SpaceX, so I will visit Wikipedia.\",\n"
+    "  \"tool\": \"web_research\",\n"
+    "  \"args\": {\"url\": \"https://en.wikipedia.org/wiki/SpaceX\"}\n"
+    "}"
+)
+
+# 10: core\settings.py
+from pydantic_settings import BaseSettings, SettingsConfigDict
+from typing import Optional
+
+class Settings(BaseSettings):
+    DATABASE_URL: Optional[str] = None
+    HF_API_TOKEN: Optional[str] = None
+    HF_API_URL: Optional[str] = None
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore" # Evita errores si hay más variables en el .env
+    )
+
+settings = Settings()
+
+# 11: embeddings\__init__.py
+
+
+# 12: embeddings\chunker.py
+# embeddings/chunker.py completo
+def chunk_text(text: str, chunk_size: int = 1000, overlap: int = 200):
+    """
+    Divide el texto en trozos más grandes para que la IA no pierda el hilo.
+    El overlap de 200 asegura que el final de un trozo aparezca al inicio del siguiente.
+    """
+    chunks = []
+    start = 0
+
+    if not text:
+        return []
+
+    while start < len(text):
+        end = start + chunk_size
+        chunk = text[start:end]
+        chunks.append(chunk)
+        # El siguiente trozo empieza un poco antes de donde terminó este
+        start = end - overlap
+
+    return chunks
+
+# 13: embeddings\model.py
+import os
+import requests
+import time
+from typing import List
+
+class RemoteEmbedder:
+    def __init__(self):
+        # UPDATED URL: Using the new router address
+        self.api_url = "https://router.huggingface.co/hf-inference/models/sentence-transformers/all-MiniLM-L6-v2"
+        self.headers = {"Authorization": f"Bearer {os.getenv('HF_API_TOKEN')}"}
+
+    def embed(self, texts: List[str]):
+        # Hugging Face API can sometimes be "cold". We add a simple retry logic.
+        for attempt in range(3):
+            response = requests.post(self.api_url, headers=self.headers, json={"inputs": texts})
+            result = response.json()
+            
+            # If the model is loading, wait and retry
+            if isinstance(result, dict) and "estimated_time" in result:
+                wait_time = result.get("estimated_time", 5)
+                print(f"⏳ Model is warming up on Hugging Face, waiting {wait_time}s...")
+                time.sleep(wait_time)
+                continue
+            
+            # Success: The API usually returns a list of embeddings
+            return result
+        
+        raise Exception(f"HF API Error: {result}")
+
+_model = None
+
+def get_embedding_model():
+    global _model
+    if _model is None:
+        print("🌐 Using Remote Hugging Face API (Saves RAM!)")
+        _model = RemoteEmbedder()
+    return _model
+
+# 14: models\__init__.py
+from .conversation import Conversation
+from .message import ChatMessage
+
+# 15: models\conversation.py
+from __future__ import annotations
+from sqlalchemy import Integer, DateTime
+from sqlalchemy.orm import relationship, Mapped, mapped_column
+from datetime import datetime
+from typing import List, TYPE_CHECKING
+from database import Base # Importación directa desde raíz
+
+if TYPE_CHECKING:
+    from .message import ChatMessage
+
+class Conversation(Base):
+    __tablename__ = "conversations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    messages: Mapped[List["ChatMessage"]] = relationship(
+        "ChatMessage",
+        back_populates="conversation",
+        cascade="all, delete-orphan"
+    )
+
+# 16: models\message.py
+from __future__ import annotations
+from sqlalchemy import Integer, String, DateTime, ForeignKey
+from sqlalchemy.orm import relationship, Mapped, mapped_column
+from datetime import datetime
+from typing import TYPE_CHECKING
+from database import Base # Importación directa desde raíz
+
+if TYPE_CHECKING:
+    from .conversation import Conversation
+
+class ChatMessage(Base):
+    __tablename__ = "chat_messages"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    role: Mapped[str] = mapped_column(String, nullable=False)
+    content: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    conversation_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("conversations.id"),
+        nullable=False
+    )
+
+    conversation: Mapped["Conversation"] = relationship(
+        "Conversation",
+        back_populates="messages"
+    )
+
+# 17: routers\__init__.py
+
+
+# 18: routers\agent.py
+from fastapi import APIRouter, HTTPException, Depends
+from pydantic import BaseModel
+from sqlalchemy.orm import Session
+from typing import Optional
+
+# Internal imports
+from database import get_db
+from services.agent_service import AgentService
+
+# 1. Schema for user requests
+class AgentRequest(BaseModel):
+    query: str
+    conversation_id: Optional[int] = None
+
+router = APIRouter(prefix="/agent", tags=["Agent"])
+
+@router.post("/analyze")
+async def analyze_intent(data: AgentRequest):
+    """Step 1: Understand what the user wants without executing tools."""
+    try:
+        agent = AgentService() 
+        intent = agent.identify_intent(data.query)
+        return intent
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Analysis Error: {str(e)}")
+
+@router.post("/execute")
+async def run_mission(data: AgentRequest, db: Session = Depends(get_db)):
+    """Step 2: Full ReAct loop with database persistence."""
+    try:
+        # Pass the database session to the service
+        agent = AgentService(db)
+        # Process the mission asynchronously
+        result = await agent.process_mission(data.query, data.conversation_id)
+        return result
+    except Exception as e:
+        print(f"DEBUG: Error in /execute -> {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+# 19: routers\chat.py
+from fastapi import APIRouter, HTTPException, Query
+from typing import Optional
+from services.ai_service import ask_document_question
+
+router = APIRouter(prefix="/chat", tags=["chat"])
+
+@router.get("/preguntar")
+async def ask_question(
+    query: str, 
+    conversation_id: Optional[int] = Query(None, description="Filter RAG results by a specific conversation ID")
+):
+    """
+    Endpoint to chat with documents. 
+    Now supports conversation_id filtering for isolated context.
+    """
+    try:
+        # --- WEEK 8 UPDATE: Pass conversation_id to the service ---
+        # This ensures the AI only sees documents ingested during this specific session.
+        respuesta_ia, fuentes = ask_document_question(query, conversation_id=conversation_id)
+        
+        return {
+            "pregunta": query,
+            "conversation_id": conversation_id,
+            "respuesta": respuesta_ia,
+            "fuentes": fuentes,
+            "status": "success"
+        }
+    except Exception as e:
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error processing the query: {str(e)}"
+        )
+
+# 20: routers\documents.py
+import asyncio
+from fastapi import APIRouter, UploadFile, File, HTTPException
+from pydantic import BaseModel
+
+# --- IMPORTACIONES DE SERVICIOS ---
+from services.document_service import ingest_document
+from services.scraper_service import scrape_and_ingest
+from services.login_service import automate_login_test
+from services.notion_service import create_notion_page_content, send_report_to_notion
+from services.email_service import send_custom_email  # <-- Importante para el Día 30
+
+router = APIRouter(prefix="/documents", tags=["documents"])
+
+# --- MODELOS DE DATOS ---
+
+class ScrapeRequest(BaseModel):
+    url: str
+
+class NotionRequest(BaseModel):
+    text: str
+
+class EmailRequest(BaseModel):  # <-- Nuevo modelo para el Día 30
+    email: str
+    subject: str
+    body: str
+
+# --- ENDPOINTS EXISTENTES ---
+
+@router.post("/subir-archivo")
+async def upload_file(file: UploadFile = File(...)):
+    if not file.filename or not file.filename.endswith(".txt"):
+        raise HTTPException(status_code=400, detail="Solo se permiten archivos .txt")
+    content = await file.read()
+    text = content.decode("utf-8")
+    count = ingest_document(title=file.filename, content=text)
+    return {"filename": file.filename, "chunks_ingested": count}
+
+@router.post("/scrapear-web")
+async def scrape_web(data: ScrapeRequest):
+    try:
+        loop = asyncio.get_running_loop()
+        resultado_msg = await loop.run_in_executor(None, scrape_and_ingest, data.url)
+        return {"url": data.url, "detail": resultado_msg}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/test-login")
+async def test_login():
+    try:
+        loop = asyncio.get_running_loop()
+        resultado = await loop.run_in_executor(None, automate_login_test)
+        return {"status": "ok", "message": resultado}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.post("/enviar-notion")
+async def send_to_notion(data: NotionRequest):
+    resultado = create_notion_page_content(data.text)
+    return {"status": "ok", "message": resultado}
+
+@router.post("/scrape-to-notion")
+async def scrape_to_notion(data: ScrapeRequest):
+    try:
+        loop = asyncio.get_running_loop()
+        text_content = await loop.run_in_executor(None, scrape_and_ingest, data.url)
+        success = send_report_to_notion(title=data.url, content=text_content)
+        
+        if success:
+            return {"status": "success", "detail": f"Análisis de {data.url} enviado a Notion."}
+        else:
+            raise HTTPException(status_code=500, detail="Error al enviar a Notion.")
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error en el flujo: {str(e)}")
+
+# --- NUEVO ENDPOINT DÍA 30: ENVÍO DE EMAIL ---
+
+@router.post("/enviar-email")
+async def email_endpoint(data: EmailRequest):
+    """
+    Día 30: Envía un correo electrónico usando SMTP.
+    """
+    try:
+        # Ejecutamos el envío de email
+        resultado = send_custom_email(
+            to_email=data.email, 
+            subject=data.subject, 
+            content=data.body
+        )
+        
+        if "✅" in resultado:
+            return {"status": "success", "message": resultado}
+        else:
+            # Si el servicio devuelve un mensaje con "❌", lanzamos error
+            raise HTTPException(status_code=500, detail=resultado)
+            
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error crítico: {str(e)}")
+
+# 21: services\__init__.py
+
+
+# 22: services\agent_service.py
+import json
+import re
+import asyncio
+import concurrent.futures
+from typing import Optional, List, Dict, Any
+from sqlalchemy.orm import Session
+
+# Core & LLM
+from services.llm.huggingface import HuggingFaceClient
+from core.prompts import AGENT_SYSTEM_PROMPT
+
+# Models
+from models.conversation import Conversation
+from models.message import ChatMessage
+
+# Tools
+from services.scraper_service import scrape_and_ingest
+from services.notion_service import send_report_to_notion
+from services.email_service import send_custom_email
+
+class AgentService:
+    def __init__(self, db: Optional[Session] = None):
+        self.llm = HuggingFaceClient()
+        self.db = db
+
+    def identify_intent(self, context_prompt: str) -> Dict[str, Any]:
+        """Identifies agent intent with defensive parsing for LLM hallucination repair."""
+        prompt = f"{AGENT_SYSTEM_PROMPT}\n\nCONTEXT AND HISTORY:\n{context_prompt}\n\nRespond ONLY with a valid JSON object."
+        
+        try:
+            raw_response = self.llm.generate(prompt)
+            
+            # Clean possible markdown block markers
+            clean_response = re.sub(r"```json|```", "", raw_response).strip()
+            json_match = re.search(r"\{.*\}", clean_response, re.DOTALL)
+            
+            if not json_match:
+                return {"thought": "Failed to parse JSON", "tool": "none", "args": {}}
+
+            intent = json.loads(json_match.group())
+            
+            # --- REPAIR LOGIC: Handle misplaced 'url' argument ---
+            if "url" in intent and "args" in intent:
+                if "url" not in intent["args"]:
+                    intent["args"]["url"] = intent["url"]
+            
+            # --- REPAIR LOGIC: Extract URL from thought if args is empty ---
+            if intent.get("tool") == "web_research" and not intent.get("args"):
+                url_found = re.search(r'https?://[^\s<>"]+', raw_response)
+                if url_found:
+                    intent["args"] = {"url": url_found.group()}
+
+            print(f"🤖 [PLAN]: {intent.get('thought')[:80]}... | [TOOL]: {intent.get('tool')}")
+            return intent
+
+        except Exception as e:
+            print(f"⚠️ AI Parsing Error: {e}")
+            return {"thought": f"Parsing Error: {str(e)}", "tool": "none", "args": {}}
+
+    def execute_tool(self, tool_name: str, args: Dict[str, Any], conversation_id: Optional[int] = None) -> str:
+        """Central tool dispatcher with argument validation."""
+        try:
+            if tool_name == "web_research":
+                url = args.get('url')
+                if url and isinstance(url, str):
+                    return scrape_and_ingest(url, conversation_id=conversation_id)
+                return f"❌ Error: Invalid URL provided: {url}"
+
+            elif tool_name == "save_to_notion":
+                title = str(args.get("title", "Market Intelligence Report"))
+                content = str(args.get("content", "No content provided."))
+                success = send_report_to_notion(title, content)
+                return "✅ Report successfully saved to Notion." if success else "❌ Notion API error."
+
+            elif tool_name == "dispatch_email":
+                return send_custom_email(
+                    to_email=str(args.get("to_email", "")),
+                    subject=str(args.get("subject", "Agent Intelligence Update")),
+                    content=str(args.get("content", ""))
+                )
+            
+            return f"❌ Error: Tool '{tool_name}' is not supported."
+        except Exception as e:
+            return f"❌ Execution Exception: {str(e)}"
+
+    async def process_mission(self, user_input: str, conversation_id: Optional[int] = None):
+        """Main agent loop: ReAct (Reason + Act) cycle."""
+        execution_history: List[Dict[str, Any]] = []
+        loop = asyncio.get_running_loop()
+
+        # 1. Database & Session Setup (Ensures foreign key exists)
+        current_conv_id = conversation_id
+        if self.db:
+            if current_conv_id:
+                # FIX: Check if conversation exists; if not, create it to satisfy constraints
+                conversation = self.db.get(Conversation, current_conv_id)
+                if not conversation:
+                    self.db.add(Conversation(id=current_conv_id))
+                    self.db.commit()
+            else:
+                # Auto-generate a new conversation
+                new_conv = Conversation()
+                self.db.add(new_conv)
+                self.db.commit()
+                self.db.refresh(new_conv)
+                current_conv_id = new_conv.id
+
+            # Save the user's mission to the message history
+            self.db.add(ChatMessage(role="user", content=user_input, conversation_id=current_conv_id))
+            self.db.commit()
+
+        try:
+            # ReAct Loop: Maximum 3 iterations to prevent infinite loops
+            for i in range(3):
+                # Build context from mission and history
+                compact_history = [
+                    {"step": h["step"], "tool": h["action"], "result": str(h["result"])[:150]}
+                    for h in execution_history
+                ]
+
+                context_prompt = (
+                    f"MISSION: {user_input}\n"
+                    f"HISTORY: {json.dumps(compact_history)}\n"
+                    f"TASK: Determine the next tool or respond 'none' if finished."
+                )
+
+                intent = self.identify_intent(context_prompt)
+                tool_name = str(intent.get("tool", "none")).lower()
+                tool_args = intent.get("args", {})
+
+                if tool_name == "none":
+                    break
+
+                # Execute the selected tool in a thread pool (since some tools are blocking)
+                with concurrent.futures.ThreadPoolExecutor() as pool:
+                    result = await loop.run_in_executor(
+                        pool, self.execute_tool, tool_name, tool_args, current_conv_id
+                    )
+
+                execution_history.append({
+                    "step": i + 1,
+                    "thought": intent.get("thought"),
+                    "action": tool_name,
+                    "result": result
+                })
+
+            # 2. Final Logging
+            if self.db and current_conv_id:
+                # Log the agent's full execution path to the DB
+                self.db.add(ChatMessage(
+                    role="assistant", 
+                    content=json.dumps(execution_history), 
+                    conversation_id=current_conv_id
+                ))
+                self.db.commit()
+
+            return {
+                "status": "success",
+                "conversation_id": current_conv_id,
+                "mission": user_input,
+                "logs": execution_history
+            }
+
+        except Exception as e:
+            return {"status": "error", "message": f"Agent loop failed: {str(e)}", "logs": execution_history}
+
+# 23: services\ai_service.py
+from typing import Optional, List, Tuple, cast
+from chromadb.api.types import Embedding
+from chroma.collection import get_collection
+from embeddings.model import get_embedding_model
+from services.llm.huggingface import HuggingFaceClient 
+
+def ask_document_question(question: str, conversation_id: Optional[int] = None) -> Tuple[str, List[str]]:
+    model = get_embedding_model()
+    collection = get_collection()
+    
+    # Generate the embedding and cast it to the correct format for ChromaDB
+    raw_embeddings = list(model.embed([question]))
+    query_vector = cast(List[Embedding], [[float(val) for val in raw_embeddings[0]]])
+
+    search_params = {"query_embeddings": query_vector, "n_results": 7}
+    
+    if conversation_id:
+        search_params["where"] = {"conversation_id": int(conversation_id)}
+    
+    results = collection.query(**search_params)
+    
+    documents_list = results.get('documents') or []
+    metadatas_list = results.get('metadatas') or []
+    
+    context = ""
+    sources = []
+
+    if documents_list and len(documents_list) > 0 and metadatas_list and len(metadatas_list) > 0:
+        first_docs = documents_list[0]
+        first_metas = metadatas_list[0]
+        
+        if first_docs:
+            context = "\n---\n".join(first_docs)
+        if first_metas:
+            sources = list(set([str(m.get('title', 'Unknown Source')) for m in first_metas if m]))
+    else:
+        context = "No relevant information found."
+        sources = []
+
+    prompt = (
+        f"You are a technical expert. Based ONLY on the provided context, "
+        f"answer the question.\n\nCONTEXT:\n{context}\n\nQUESTION: {question}\n\nANSWER:"
+    )
+    
+    try:
+        hf_client = HuggingFaceClient()
+        respuesta_ia = hf_client.generate(prompt)
+        return respuesta_ia, sources
+    except Exception as e:
+        return f"IA Connection Error: {str(e)}", []
+
+# 24: services\document_service.py
+import uuid
+from typing import Optional, List, cast
+from chromadb.api.types import Metadata, Embedding
+from embeddings.model import get_embedding_model
+from embeddings.chunker import chunk_text
+from chroma.collection import get_collection
+
+def ingest_document(title: str, content: str, conversation_id: Optional[int] = None):
+    # 1. Get our (now remote) model and Chroma collection
+    model = get_embedding_model()
+    collection = get_collection()
+
+    # 2. Break text into chunks
+    chunks = chunk_text(content)
+    if not chunks:
+        print("⚠️ No chunks created from content.")
+        return 0
+        
+    try:
+        # 3. Get embeddings via API call 
+        print(f"🌐 Requesting embeddings for {len(chunks)} chunks via API...")
+        response_data = model.embed(chunks)
+        
+        # VALIDATION: Ensure response is a list (embeddings) and not a dict (error)
+        if not isinstance(response_data, list):
+            print(f"❌ API Error or Unexpected Response Format: {response_data}")
+            return 0
+
+        # Cast the data so Pylance knows it is now a valid list of embeddings
+        all_embeddings = cast(List[Embedding], response_data)
+        
+        # 4. Prepare IDs and Metadata
+        ids = [str(uuid.uuid4()) for _ in chunks]
+        metadatas = cast(List[Metadata], [
+            {
+                "title": title,
+                "conversation_id": int(conversation_id) if conversation_id is not None else 0
+            } for _ in chunks
+        ])
+
+        # 5. Add to ChromaDB
+        # Pylance is happy now because all_embeddings is explicitly List[Embedding]
+        collection.add(
+            documents=chunks,
+            embeddings=all_embeddings,
+            ids=ids,
+            metadatas=metadatas
+        )
+        
+        print(f"✅ Successfully ingested {len(chunks)} chunks into RAG.")
+        return len(chunks)
+        
+    except Exception as e:
+        print(f"❌ Ingestion Error: {str(e)}")
+        return 0
+
+# 25: services\email_service.py
+import os
+import resend
+from typing import cast
+
+def send_custom_email(to_email: str, subject: str, content: str):
+    api_key = os.getenv("RESEND_API_KEY")
+    
+    if not api_key:
+        return "❌ Error: RESEND_API_KEY not found in environment"
+
+    resend.api_key = api_key
+
+    try:
+        print(f"🌐 Sending email via Resend API (HTTPS)...")
+        
+        # We explicitly define the dictionary and cast it to SendParams
+        # to satisfy the strict Pylance type checker.
+        email_params = {
+            "from": "onboarding@resend.dev", 
+            "to": [to_email], # Resend requires a list for 'to'
+            "subject": subject,
+            "text": content,
+        }
+
+        # The cast() function tells Pylance: "Trust me, this matches SendParams"
+        email = resend.Emails.send(cast(resend.Emails.SendParams, email_params))
+        
+        return "✅ Email enviado con éxito vía API"
+
+    except Exception as e:
+        print(f"❌ Resend Error: {str(e)}")
+        return f"❌ Error al enviar email vía API: {str(e)}"
+
+# 26: services\login_service.py
+from playwright.sync_api import sync_playwright
+
+def automate_login_test():
+    """
+    Script para automatizar el login en una web de pruebas.
+    """
+    with sync_playwright() as p:
+        # headless=False para que veas la ventana abrirse
+        browser = p.chromium.launch(headless=False) 
+        context = browser.new_context()
+        page = context.new_page()
+        
+        try:
+            print("🚀 Visitando página de login...")
+            page.goto("https://the-internet.herokuapp.com/login")
+
+            # Rellenamos los campos usando sus selectores de ID (#)
+            page.fill("#username", "tomsmith")
+            page.fill("#password", "SuperSecretPassword!")
+            
+            # Hacemos clic en el botón
+            page.click("button[type='submit']")
+
+            # Esperamos a que la página cargue tras el login
+            page.wait_for_load_state("networkidle")
+
+            # Verificamos si aparece el mensaje de éxito
+            # El ID #flash es donde esta web pone las notificaciones
+            success_msg = page.inner_text("#flash")
+            
+            if "You logged into a secure area!" in success_msg:
+                return "✅ Login exitoso: ¡Estamos dentro!"
+            else:
+                return "❌ El login falló o el mensaje cambió."
+
+        except Exception as e:
+            return f"Error en el robot: {str(e)}"
+        finally:
+            # Pausa de 3 segundos para que veas el resultado antes de cerrar
+            page.wait_for_timeout(3000)
+            browser.close()
+
+# 27: services\notion_service.py
+import requests
+import os
+from dotenv import load_dotenv
+import textwrap
+
+load_dotenv()
+
+NOTION_TOKEN = os.getenv("NOTION_TOKEN")
+PAGE_ID = os.getenv("NOTION_PAGE_ID")
+
+def create_notion_page_content(text: str):
+    """Función simple para enviar un párrafo (la que usábamos antes)"""
+    url = f"https://api.notion.com/v1/blocks/{PAGE_ID}/children"
+    headers = {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+    }
+    data = {
+        "children": [{
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {"rich_text": [{"text": {"content": text}}]}
+        }]
+    }
+    response = requests.patch(url, headers=headers, json=data)
+    return "✅ OK" if response.status_code == 200 else f"❌ Error: {response.text}"
+
+def send_report_to_notion(title: str, content: str):
+    url = f"https://api.notion.com/v1/blocks/{PAGE_ID}/children"
+    headers = {
+        "Authorization": f"Bearer {NOTION_TOKEN}",
+        "Content-Type": "application/json",
+        "Notion-Version": "2022-06-28"
+    }
+
+    children = [
+        {
+            "object": "block",
+            "type": "heading_2",
+            "heading_2": {"rich_text": [{"text": {"content": f"📌 Reporte: {title}"}}]}
+        }
+    ]
+
+    # Usamos textwrap para cortar el texto sin romper palabras
+    # width=2000 asegura que cada bloque sea de máximo 2000 caracteres
+    paragraphs = textwrap.wrap(content, width=2000, replace_whitespace=False)
+
+    for p in paragraphs:
+        children.append({
+            "object": "block",
+            "type": "paragraph",
+            "paragraph": {"rich_text": [{"text": {"content": p}}]}
+        })
+
+    data = {"children": children}
+    response = requests.patch(url, headers=headers, json=data)
+    return response.status_code == 200
+
+# 28: services\scraper_service.py
+import time
+from typing import Optional
+from playwright.sync_api import sync_playwright
+from services.document_service import ingest_document
+
+def scrape_and_ingest(url: str, conversation_id: Optional[int] = None):
+    """
+    Sequential execution to survive 512MB RAM:
+    1. Open Browser -> Extract Text -> Close Browser (RAM Freed)
+    2. Load AI Model -> Ingest to RAG (RAM Allocated)
+    """
+    scraped_text = ""
+    page_title = "Unknown"
+
+    # --- PHASE 1: SCRAPING (Memory Intensive) ---
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox", 
+                "--disable-dev-shm-usage", 
+                "--disable-gpu",
+                "--single-process",
+                "--no-zygote"
+            ]
+        )
+        context = browser.new_context(
+            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36"
+        )
+        page = context.new_page()
+        
+        # Block heavy assets to keep memory footprint tiny
+        page.route("**/*.{png,jpg,jpeg,gif,svg,css,woff,pdf}", lambda route: route.abort())
+        
+        try:
+            print(f"🕵️ Robot visiting: {url}")
+            # Use 'domcontentloaded' for balance between speed and content
+            page.goto(url, wait_until="domcontentloaded", timeout=45000)
+            time.sleep(1) # Brief pause for JS execution
+            
+            page_title = page.title()
+            elements = page.query_selector_all("h1, h2, h3, p")
+            scraped_text = "\n".join([el.inner_text().strip() for el in elements if len(el.inner_text().strip()) > 20])
+
+        except Exception as e:
+            print(f"❌ Scraper Error: {str(e)}")
+            return f"Scraping failed: {str(e)}"
+        finally:
+            # IMPORTANT: We close the browser BEFORE moving to ingestion
+            page.close()
+            context.close()
+            browser.close()
+
+    # --- PHASE 2: INGESTION (AI Model RAM usage begins here) ---
+    if not scraped_text or len(scraped_text) < 100:
+        return "Error: The website did not return enough readable content."
+
+    try:
+        print(f"🧠 Browser closed. Starting RAG ingestion for: {page_title}")
+        ingest_document(
+            title=f"Web: {page_title}", 
+            content=scraped_text, 
+            conversation_id=conversation_id
+        )
+        
+        return (
+            f"Web Title: {page_title}\n"
+            f"Content Snippet: {scraped_text[:1000]}...\n"
+            f"Status: Scraper RAM released and data successfully saved to RAG."
+        )
+    except Exception as e:
+        print(f"❌ Ingestion Error: {str(e)}")
+        return f"Scraping succeeded but RAG ingestion failed: {str(e)}"
+
+# 29: services\llm\__init__.py
+
+
+# 30: services\llm\base.py
+from abc import ABC, abstractmethod
+
+class LLMClient(ABC):
+
+    @abstractmethod
+    def generate(self, prompt: str) -> str:
+        pass
+
+# 31: services\llm\huggingface.py
+import os
+import requests
+from services.llm.base import LLMClient
+
+class HuggingFaceClient(LLMClient):
+    # Definimos los tipos explícitamente para que Pylance esté feliz
+    api_url: str
+    token: str
+
+    def __init__(self):
+        # 1. Obtenemos los valores
+        api_url = os.getenv("HF_API_URL")
+        token = os.getenv("HF_API_TOKEN")
+
+        # 2. Validación de seguridad (esto elimina el warning)
+        if api_url is None or token is None:
+            raise RuntimeError(
+                "Faltan variables de entorno: asegúrate de que HF_API_URL y HF_API_TOKEN estén en el .env"
+            )
+
+        # 3. Asignamos. Aquí Pylance ya sabe que NO son None
+        self.api_url = api_url
+        self.token = token
+        self.model = "deepseek-ai/DeepSeek-V3" 
+
+    def generate(self, prompt: str) -> str:
+        headers = {
+            "Authorization": f"Bearer {self.token}",
+            "Content-Type": "application/json"
+        }
+
+        payload = {
+            "model": self.model,
+            "messages": [
+                {
+                    "role": "system", 
+                    "content": "Eres un asistente técnico experto. Responde brevemente usando el contexto."
+                },
+                {
+                    "role": "user", 
+                    "content": prompt
+                }
+            ],
+            "max_tokens": 500,
+            "temperature": 0.1
+        }
+
+        try:
+            # Ahora self.api_url está garantizado como str, el error desaparece
+            response = requests.post(
+                url=self.api_url, 
+                headers=headers,
+                json=payload,
+                timeout=30
+            )
+            
+            response.raise_for_status()
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
+
+        except Exception as e:
+            return f"Error en la llamada a la IA: {str(e)}"
+
+# 32: services\llm\local_gpt4all.py
+from gpt4all import GPT4All
+from services.llm.base import LLMClient
+
+class LocalGPT4AllClient(LLMClient):
+    def __init__(self):
+        self.model = GPT4All(
+            model_name="Phi-3-mini-4k-instruct.Q4_0.gguf",
+            #model_path=r"C:/Users/Guill/.gpt4all/models",
+            allow_download=False
+        )
+
+    def generate(self, prompt: str) -> str:
+        return self.model.generate(prompt, max_tokens=256, temp=0.7)
