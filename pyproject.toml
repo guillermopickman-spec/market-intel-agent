@@ -1,6 +1,6 @@
 [project]
-name = "market-intel-agent-v1-1"
-version = "0.1.0"
+name = "market-intel-agent-v1-2"
+version = "1.2.0"
 description = ""
 authors = [
     {name = "guillermopickman-spec",email = "guillermopickman@gmail.com"}

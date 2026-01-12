@@ -54,4 +54,4 @@ SCRAPER_TIMEOUT=60
 
 # --- Project Metadata (optional overrides) ---
 PROJECT_NAME=Market Intelligence Agent
-VERSION=1.1.0
+VERSION=1.2.0
