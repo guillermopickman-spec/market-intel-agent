@@ -1,4 +1,22 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+// Use relative /api path in production (Vercel) or when NEXT_PUBLIC_API_URL is not set
+// Fallback to localhost for local development
+const getApiUrl = (): string => {
+  // If explicitly set, use that
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  
+  // In production (Vercel), use relative path to serverless function
+  // This will be handled by vercel.json rewrites
+  if (process.env.NODE_ENV === 'production') {
+    return '/api';
+  }
+  
+  // Local development fallback
+  return 'http://localhost:8000';
+};
+
+const API_URL = getApiUrl();
 
 export interface ApiError {
   detail: string;
