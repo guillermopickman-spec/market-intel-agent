@@ -5,13 +5,16 @@ LLM_PROVIDER=groq
 # Hugging Face (get your token at https://huggingface.co/settings/tokens)
 HF_API_TOKEN=your_huggingface_token_here
 HF_API_URL=https://router.huggingface.co/v1/chat/completions
-HF_MODEL_NAME=deepseek-ai/DeepSeek-V3
+HF_EMBED_URL=https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2
 
 # Embedding Provider: Gemini (text-embedding-004) - 768 dimensions
 # The system now uses Gemini embeddings exclusively
+EMBEDDING_PROVIDER=local
+LOCAL_EMBED_MODEL_NAME=sentence-transformers/all-MiniLM-L6-v2
 
 # Gemini (get your key from https://makersuite.google.com/app/apikey)
-GEMINI_API_KEY=AI...your_gemini_api_key_here
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL=gemini-3-flash-preview
 
 # Groq (fast OpenAI-compatible API, get your key at https://console.groq.com/keys)
 # Free tier: ~14,400 requests/day
@@ -42,10 +45,12 @@ ANONYMIZED_TELEMETRY=False
 # --- ChromaDB Settings ---
 # Disable ChromaDB telemetry (highly recommended for privacy)
 CHROMA_SERVER_NO_ANALYTICS=True
+CHROMA_TELEMETRY_IMPL=none
 
 # --- CORS Configuration ---
-# Comma-separated http:// URLs allowed for browser/web access
-CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:8000
+# Comma-separated http:// or https:// URLs allowed for browser/web access
+# Include your production domain (e.g., https://market-intel-agent.onrender.com)
+CORS_ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:8000,https://market-intel-agent.onrender.com
 
 # --- Request Timeouts (in seconds) ---
 HTTP_REQUEST_TIMEOUT=30
