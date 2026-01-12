@@ -163,7 +163,7 @@ async def get_reports(db: Session = Depends(get_db), limit: int = 100):
                 "query": log.query,
                 "response": log.response,
                 "status": log.status,
-                "created_at": log.created_at.isoformat() if log.created_at else None,
+                "created_at": log.created_at.isoformat() if log.created_at is not None else None,
             }
             for log in logs
         ]
