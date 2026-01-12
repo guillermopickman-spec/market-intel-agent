@@ -9,7 +9,7 @@ class Settings(BaseSettings):
 
     # --- PROJECT METADATA ---
     PROJECT_NAME: str = "Market Intelligence Agent"
-    VERSION: str = "1.1.0"
+    VERSION: str = "1.3.0"
 
     # --- DATABASE ---
     DATABASE_URL: str = Field(

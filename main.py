@@ -75,7 +75,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Market Intelligence Agent",
-    version="1.1.0",
+    version="1.3.0",
     lifespan=lifespan
 )
 
@@ -100,7 +100,7 @@ app.include_router(documents.router, tags=["Documents"])
 
 @app.get("/", tags=["System"])
 async def root():
-    return {"status": "online", "version": "1.1.0"}
+    return {"status": "online", "version": "1.3.0"}
 
 @app.get("/ready", tags=["System"])
 async def ready_check():
@@ -109,7 +109,7 @@ async def ready_check():
     Returns 200 as soon as the app is up (doesn't wait for ChromaDB).
     This allows Render to mark the service as ready quickly.
     """
-    return {"status": "ready", "version": "1.1.0"}
+    return {"status": "ready", "version": "1.3.0"}
 
 @app.get("/health", tags=["System"])
 async def health_check():
