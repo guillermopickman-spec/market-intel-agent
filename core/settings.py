@@ -59,9 +59,9 @@ class Settings(BaseSettings):
 
     # --- CORS CONFIGURATION ---
     CORS_ALLOWED_ORIGINS: str = Field(
-        default="http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:8000",
+        default="http://localhost:3000,http://localhost:8000,http://127.0.0.1:3000,http://127.0.0.1:8000,https://*.vercel.app",
         validation_alias="CORS_ALLOWED_ORIGINS",
-        description="Comma-separated list of allowed CORS origins"
+        description="Comma-separated list of allowed CORS origins (supports wildcards for Vercel)"
     )
 
     # --- REQUEST TIMEOUTS (in seconds) ---
