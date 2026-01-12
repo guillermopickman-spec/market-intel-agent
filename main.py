@@ -94,7 +94,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-app.include_router(agent.router, tags=["Agent"])
+app.include_router(agent.router)
 app.include_router(chat.router, tags=["Chat"])
 app.include_router(documents.router, tags=["Documents"])
 

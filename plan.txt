@@ -1,0 +1,26 @@
+The "Master Implementation" Prompt
+Context: I have a FastAPI backend (MIA v1.2) deployed on Render and a PostgreSQL DB on Neon. Goal: Create a modern, robust, and free front end using Next.js 15, Tailwind CSS, and Shadcn/UI to be deployed on Vercel.
+
+Task Instructions for Agent:
+
+Scaffold: Initialize a Next.js 15 project in a new /frontend directory.
+
+UI System: Install and configure Tailwind CSS and Shadcn/UI. Use a "Dark Industrial" theme (Slate/Zinc) to match the "Market Intelligence Agent" brand.
+
+Connection: Create a centralized api.ts utility using fetch to communicate with my Render URL (use an environment variable NEXT_PUBLIC_API_URL).
+
+Core Pages:
+
+Dashboard: A grid showing real-time stats from the Neon DB (GPU prices, scan history).
+
+Agent Terminal: A chat-style interface to trigger the MIA ReAct loop. It must handle Streaming Responses from FastAPI so I can see the "thinking" steps.
+
+Reports: A clean table view for technical reconnaissance reports.
+
+Robustness: Implement Zod for schema validation and React Query (TanStack) for caching and loading states.
+
+Backend Bridge: Update my existing FastAPI main.py to include the necessary CORSMiddleware for the new Vercel domain.
+
+Deployment: Generate a vercel.json and a README with the exact environment variables needed for Vercel.
+
+Constraint: Do not use any paid libraries. Keep the bundle size small. Prioritize "Lucide-React" for icons.

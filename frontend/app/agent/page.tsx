@@ -25,24 +25,30 @@ export default function AgentTerminal() {
   const streamingMutation = useStreamingMission(
     (chunk: StreamChunk) => {
       if (chunk.type === "thinking") {
-        setCurrentChunks((prev) => [...prev, chunk]);
+        setCurrentChunks((prev) => {
+          const updated = [...prev, chunk];
+          return updated;
+        });
       } else if (chunk.type === "tool") {
-        setCurrentChunks((prev) => [...prev, chunk]);
+        setCurrentChunks((prev) => {
+          const updated = [...prev, chunk];
+          return updated;
+        });
       } else if (chunk.type === "complete") {
-        // Final report received
-        setMessages((prev) => {
-          const chunks = [...currentChunks];
-          setCurrentChunks([]);
-          setIsStreaming(false);
-          return [
+        // Final report received - capture chunks before clearing
+        setCurrentChunks((prevChunks) => {
+          const finalChunks = [...prevChunks];
+          setMessages((prev) => [
             ...prev,
             {
               role: "assistant",
               content: chunk.report || "",
               timestamp: new Date(),
-              chunks: chunks,
+              chunks: finalChunks,
             },
-          ];
+          ]);
+          setIsStreaming(false);
+          return []; // Clear chunks
         });
       } else if (chunk.type === "error") {
         setMessages((prev) => [
