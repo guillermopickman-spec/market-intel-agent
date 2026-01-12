@@ -9,7 +9,7 @@ venv/
 .venv/
 env/
 bin/
-lib/
+/lib/
 develop-eggs/
 dist/
 downloads/
