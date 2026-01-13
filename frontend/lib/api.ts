@@ -3,9 +3,17 @@
 
 const API_TIMEOUT = 10000; // 10 seconds
 
+// Normalize URL to remove trailing slashes and ensure proper format
+const normalizeUrl = (url: string): string => {
+  if (!url) return "";
+  // Remove trailing slashes
+  return url.replace(/\/+$/, "");
+};
+
 const getApiUrl = () => {
   if (typeof window === "undefined") return "";
-  return process.env.NEXT_PUBLIC_API_URL || "";
+  const url = process.env.NEXT_PUBLIC_API_URL || "";
+  return normalizeUrl(url);
 };
 
 const useMockApi = () => {
@@ -80,10 +88,13 @@ export const api = {
       throw new Error("NEXT_PUBLIC_API_URL is not configured");
     }
 
-    const url = `${apiUrl}${endpoint}`;
+    // Ensure endpoint starts with / and API URL doesn't end with /
+    const normalizedEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+    const url = `${apiUrl}${normalizedEndpoint}`;
 
+    // Always log in production for debugging 404 errors
+    console.log(`[API] GET ${url}`);
     if (isDevelopment()) {
-      console.log(`[API] GET ${url}`);
       console.log(`[API] Environment check - NEXT_PUBLIC_API_URL: ${process.env.NEXT_PUBLIC_API_URL || "NOT SET"}`);
       console.log(`[API] Environment check - NEXT_PUBLIC_USE_MOCK_API: ${process.env.NEXT_PUBLIC_USE_MOCK_API || "NOT SET"}`);
     }
@@ -98,9 +109,10 @@ export const api = {
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => response.statusText);
-        throw new Error(
-          `API request failed: ${response.status} ${response.statusText}${errorText ? ` - ${errorText}` : ""}`
-        );
+        const errorMessage = `API request failed: ${response.status} ${response.statusText}${errorText ? ` - ${errorText}` : ""}`;
+        // Log full URL for debugging 404 errors
+        console.error(`[API] GET ${url} failed:`, errorMessage);
+        throw new Error(errorMessage);
       }
 
       const data = await response.json();
@@ -112,9 +124,8 @@ export const api = {
       return data as T;
     } catch (error) {
       const enhancedError = handleApiError(error, endpoint);
-      if (isDevelopment()) {
-        console.error(`[API] GET ${url} - Error`, enhancedError);
-      }
+      // Always log errors in production for debugging
+      console.error(`[API] GET ${url} - Error`, enhancedError);
       throw enhancedError;
     }
   },
@@ -129,11 +140,12 @@ export const api = {
       throw new Error("NEXT_PUBLIC_API_URL is not configured");
     }
 
-    const url = `${apiUrl}${endpoint}`;
+    // Ensure endpoint starts with / and API URL doesn't end with /
+    const normalizedEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+    const url = `${apiUrl}${normalizedEndpoint}`;
 
-    if (isDevelopment()) {
-      console.log(`[API] POST ${url}`, data);
-    }
+    // Always log in production for debugging
+    console.log(`[API] POST ${url}`, data);
 
     try {
       // Increase timeout for mission execution (can take longer)
@@ -153,9 +165,10 @@ export const api = {
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => response.statusText);
-        throw new Error(
-          `API request failed: ${response.status} ${response.statusText}${errorText ? ` - ${errorText}` : ""}`
-        );
+        const errorMessage = `API request failed: ${response.status} ${response.statusText}${errorText ? ` - ${errorText}` : ""}`;
+        // Log full URL for debugging 404 errors
+        console.error(`[API] POST ${url} failed:`, errorMessage);
+        throw new Error(errorMessage);
       }
 
       const result = await response.json();
@@ -167,9 +180,8 @@ export const api = {
       return result as T;
     } catch (error) {
       const enhancedError = handleApiError(error, endpoint);
-      if (isDevelopment()) {
-        console.error(`[API] POST ${url} - Error`, enhancedError);
-      }
+      // Always log errors in production for debugging
+      console.error(`[API] POST ${url} - Error`, enhancedError);
       throw enhancedError;
     }
   },

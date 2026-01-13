@@ -12,30 +12,32 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 # Install system dependencies and Poetry with cache mounts
+# Removed wget and gnupg as they're not needed (curl is sufficient)
 RUN --mount=type=cache,target=/var/cache/apt,sharing=locked \
     --mount=type=cache,target=/var/lib/apt,sharing=locked \
     apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     libpq-dev \
     curl \
-    wget \
-    gnupg \
     ca-certificates \
     && curl -sSL https://install.python-poetry.org | python3 -
 
 # Copy Poetry configuration and install dependencies with cache mounts
 COPY pyproject.toml poetry.lock* ./
-# Configure pip timeout (but don't use progress_bar - it can slow things down)
+# Configure pip timeout for slow connections
 RUN pip config set global.timeout 600
+# Install dependencies with optimized settings
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=cache,target=/root/.cache/pypoetry \
     poetry config installer.max-workers 4 && \
-    poetry install --no-interaction --no-ansi --no-root
+    poetry config installer.no-binary :all: || true && \
+    poetry install --no-interaction --no-ansi --no-root --only=main
 
 # Install Playwright and Chromium with cache mount (keeps browser cache between builds)
+# Only install chromium (not all browsers) and skip system dependencies if possible
 RUN --mount=type=cache,target=/root/.cache/ms-playwright \
-    poetry run playwright install chromium \
-    && poetry run playwright install-deps chromium || true
+    poetry run playwright install --with-deps chromium || \
+    (poetry run playwright install chromium && poetry run playwright install-deps chromium || true)
 
 # Copy application code
 COPY . .
