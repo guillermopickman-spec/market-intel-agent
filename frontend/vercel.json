@@ -1,17 +1,4 @@
 {
-  "buildCommand": "npm install && npm run build",
-  "outputDirectory": ".next",
   "framework": "nextjs",
-  "regions": ["iad1"],
-  "rewrites": [
-    {
-      "source": "/api/(.*)",
-      "destination": "/api"
-    }
-  ],
-  "functions": {
-    "../api/index.py": {
-      "runtime": "vercel-python@3.12"
-    }
-  }
+  "regions": ["iad1"]
 }

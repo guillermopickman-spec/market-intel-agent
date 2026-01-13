@@ -1,143 +1,279 @@
-import { useQuery, useMutation, UseMutationResult } from "@tanstack/react-query"
-import { MissionRequest, MissionLog, StreamChunk } from "./validators"
-import { z } from "zod"
+"use client";
 
-// Get API base URL from environment
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000"
+import { useState, useEffect } from "react";
+import { mockApi, type HealthStatus, type MissionStats, type Report, type Activity } from "./mockApi";
+import { api } from "./api";
+import { transformHealthResponse, transformStatsResponse, transformReportsResponse } from "./apiTransformers";
 
-// Health check response schema
-const HealthResponseSchema = z.object({
-  status: z.string(),
-  database: z.string(),
-  chromadb: z.string(),
-  server_time: z.string(),
-})
+const isDevelopment = process.env.NODE_ENV === "development";
 
-export type HealthResponse = z.infer<typeof HealthResponseSchema>
+// Check if we should use mock API (works on both server and client)
+const useMockApi = () => {
+  // In Next.js, NEXT_PUBLIC_* env vars are available on both server and client
+  return process.env.NEXT_PUBLIC_USE_MOCK_API === "true";
+};
 
-// Stats response schema
-const StatsResponseSchema = z.object({
-  total_missions: z.number(),
-  completed_missions: z.number(),
-  failed_missions: z.number(),
-})
+// Mission request type
+export interface MissionRequest {
+  user_input: string;
+  conversation_id?: number;
+}
 
-export type StatsResponse = z.infer<typeof StatsResponseSchema>
+// Mission execution response type
+export interface MissionExecutionResponse {
+  status: "complete" | "failed";
+  mission_id: number;
+  report: string;
+  trace: Array<{ tool: string; status?: string; result?: string }>;
+}
+
+// Mission execution hook for Phase 5 (non-streaming)
+export function useMissionExecution() {
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  const executeMission = async (request: MissionRequest): Promise<MissionExecutionResponse> => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      if (useMockApi()) {
+        // Mock execution for testing
+        await new Promise(resolve => setTimeout(resolve, 2000));
+        return {
+          status: "complete",
+          mission_id: 999,
+          report: `Mock mission execution result for: "${request.user_input}"\n\nThis is a mock response. Set NEXT_PUBLIC_USE_MOCK_API=false to use real backend.`,
+          trace: [
+            { tool: "web_search", status: "Gathered" },
+            { tool: "web_research", status: "Gathered" },
+          ],
+        };
+      } else {
+        // Real API call to /execute endpoint
+        const response = await api.post<MissionExecutionResponse>("/execute", request);
+        return response;
+      }
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error("Unknown error");
+      setError(error);
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return { executeMission, isLoading, error };
+}
 
 // Health check hook
 export function useHealthCheck() {
-  return useQuery<HealthResponse>({
-    queryKey: ["health"],
-    queryFn: async () => {
-      const response = await fetch(`${API_URL}/health`)
-      if (!response.ok) {
-        throw new Error("Health check failed")
+  const [data, setData] = useState<HealthStatus | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    // Only run on client side
+    if (typeof window === "undefined") return;
+
+    const fetchHealth = async () => {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        if (useMockApi()) {
+          const health = await mockApi.getHealth();
+          setData(health);
+        } else {
+          // Real API call with transformation
+          const backendResponse = await api.get<{
+            status: "ok" | "degraded";
+            database: string;
+            chromadb: string;
+            server_time: string;
+          }>("/health");
+          const transformed = transformHealthResponse(backendResponse);
+          setData(transformed);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err : new Error("Unknown error"));
+      } finally {
+        setIsLoading(false);
       }
-      const data = await response.json()
-      return HealthResponseSchema.parse(data)
-    },
-    refetchInterval: 30000, // Refetch every 30 seconds
-  })
+    };
+
+    fetchHealth();
+    
+    // Poll every 30 seconds
+    const interval = setInterval(fetchHealth, 30000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return { data, isLoading, error };
 }
 
-// Mission stats hook
+// Mission statistics hook
 export function useMissionStats() {
-  return useQuery<StatsResponse>({
-    queryKey: ["stats"],
-    queryFn: async () => {
-      const response = await fetch(`${API_URL}/stats`)
-      if (!response.ok) {
-        throw new Error("Failed to fetch stats")
+  const [data, setData] = useState<MissionStats | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    // Only run on client side
+    if (typeof window === "undefined") return;
+
+    const fetchStats = async () => {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        const isMock = useMockApi();
+        if (isDevelopment && typeof window !== "undefined") {
+          console.log(`[Stats] Using ${isMock ? "MOCK" : "REAL"} API. NEXT_PUBLIC_USE_MOCK_API=${process.env.NEXT_PUBLIC_USE_MOCK_API}`);
+        }
+        
+        if (isMock) {
+          const stats = await mockApi.getStats();
+          setData(stats);
+        } else {
+          // Real API call with transformation
+          const backendResponse = await api.get<{
+            total_missions: number;
+            completed_missions: number;
+            failed_missions: number;
+          }>("/stats");
+          const transformed = transformStatsResponse(backendResponse);
+          if (isDevelopment && typeof window !== "undefined") {
+            console.log(`[Stats] Backend response:`, backendResponse);
+            console.log(`[Stats] Transformed:`, transformed);
+          }
+          setData(transformed);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err : new Error("Unknown error"));
+      } finally {
+        setIsLoading(false);
       }
-      const data = await response.json()
-      return StatsResponseSchema.parse(data)
-    },
-    refetchInterval: 60000, // Refetch every minute
-  })
+    };
+
+    fetchStats();
+    
+    // Refresh every 10 seconds
+    const interval = setInterval(fetchStats, 10000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return { data, isLoading, error };
 }
 
 // Reports hook
 export function useReports() {
-  return useQuery<MissionLog[]>({
-    queryKey: ["reports"],
-    queryFn: async () => {
-      const response = await fetch(`${API_URL}/reports`)
-      if (!response.ok) {
-        throw new Error("Failed to fetch reports")
-      }
-      const data = await response.json()
-      return z.array(z.any()).parse(data) as MissionLog[]
-    },
-  })
-}
+  const [data, setData] = useState<Report[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
 
-// Streaming mission hook
-export function useStreamingMission(
-  onChunk: (chunk: StreamChunk) => void,
-  onError: (error: Error) => void
-): UseMutationResult<void, Error, MissionRequest> {
-  return useMutation({
-    mutationFn: async (request: MissionRequest) => {
-      const response = await fetch(`${API_URL}/execute/stream`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(request),
-      })
+  useEffect(() => {
+    // Only run on client side
+    if (typeof window === "undefined") return;
 
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`)
-      }
-
-      if (!response.body) {
-        throw new Error("Response body is null")
-      }
-
-      const reader = response.body.getReader()
-      const decoder = new TextDecoder()
-      let buffer = ""
+    const fetchReports = async () => {
+      setIsLoading(true);
+      setError(null);
 
       try {
-        while (true) {
-          const { done, value } = await reader.read()
-
-          if (done) {
-            break
-          }
-
-          // Decode the chunk and add to buffer
-          buffer += decoder.decode(value, { stream: true })
-
-          // Process complete lines (NDJSON format)
-          const lines = buffer.split("\n")
-          buffer = lines.pop() || "" // Keep incomplete line in buffer
-
-          for (const line of lines) {
-            if (line.trim()) {
-              try {
-                const chunk = JSON.parse(line) as StreamChunk
-                onChunk(chunk)
-              } catch (parseError) {
-                console.error("Failed to parse chunk:", line, parseError)
-              }
-            }
-          }
+        if (useMockApi()) {
+          const reports = await mockApi.getReports();
+          setData(reports);
+        } else {
+          // Real API call with transformation
+          const backendReports = await api.get<Array<{
+            id: number;
+            conversation_id: number;
+            query: string;
+            response: string;
+            status: string;
+            created_at: string;
+          }>>("/reports");
+          const transformed = transformReportsResponse(backendReports);
+          setData(transformed);
         }
-
-        // Process any remaining buffer
-        if (buffer.trim()) {
-          try {
-            const chunk = JSON.parse(buffer) as StreamChunk
-            onChunk(chunk)
-          } catch (parseError) {
-            console.error("Failed to parse final chunk:", buffer, parseError)
-          }
-        }
-      } catch (error) {
-        onError(error instanceof Error ? error : new Error(String(error)))
-        throw error
+      } catch (err) {
+        setError(err instanceof Error ? err : new Error("Unknown error"));
+      } finally {
+        setIsLoading(false);
       }
-    },
-  })
+    };
+
+    fetchReports();
+  }, []);
+
+  return { data, isLoading, error, refetch: () => {
+    if (typeof window === "undefined") return;
+    const fetchReports = async () => {
+      setIsLoading(true);
+      setError(null);
+      try {
+        if (useMockApi()) {
+          const reports = await mockApi.getReports();
+          setData(reports);
+        } else {
+          // Real API call with transformation
+          const backendReports = await api.get<Array<{
+            id: number;
+            conversation_id: number;
+            query: string;
+            response: string;
+            status: string;
+            created_at: string;
+          }>>("/reports");
+          const transformed = transformReportsResponse(backendReports);
+          setData(transformed);
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err : new Error("Unknown error"));
+      } finally {
+        setIsLoading(false);
+      }
+    };
+    fetchReports();
+  }};
+}
+
+// Recent activity hook
+export function useActivity() {
+  const [data, setData] = useState<Activity[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<Error | null>(null);
+
+  useEffect(() => {
+    // Only run on client side
+    if (typeof window === "undefined") return;
+
+    const fetchActivity = async () => {
+      setIsLoading(true);
+      setError(null);
+
+      try {
+        if (useMockApi()) {
+          const activity = await mockApi.getActivity();
+          setData(activity);
+        } else {
+          // Real API call would go here
+          throw new Error("Real API not yet implemented");
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err : new Error("Unknown error"));
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchActivity();
+    
+    // Refresh every 15 seconds
+    const interval = setInterval(fetchActivity, 15000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return { data, isLoading, error };
 }

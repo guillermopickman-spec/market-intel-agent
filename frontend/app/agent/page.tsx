@@ -1,134 +1,177 @@
 "use client";
 
+import { Bot, Send, Loader2 } from "lucide-react";
 import { useState } from "react";
-import { MessageList } from "@/components/agent/MessageList";
-import { MissionInput } from "@/components/agent/MissionInput";
-import { useStreamingMission } from "@/lib/queries";
-import { MissionRequest, StreamChunk } from "@/lib/validators";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
-import { ArrowLeft } from "lucide-react";
+import { useMissionExecution, useReports, type MissionRequest } from "@/lib/queries";
 
-interface Message {
+type Message = {
+  id: number;
   role: "user" | "assistant";
   content: string;
-  timestamp: Date;
-  chunks?: StreamChunk[];
-}
+  timestamp: string;
+};
 
-export default function AgentTerminal() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [currentChunks, setCurrentChunks] = useState<StreamChunk[]>([]);
-  const [isStreaming, setIsStreaming] = useState(false);
-
-  const streamingMutation = useStreamingMission(
-    (chunk: StreamChunk) => {
-      if (chunk.type === "thinking") {
-        setCurrentChunks((prev) => {
-          const updated = [...prev, chunk];
-          return updated;
-        });
-      } else if (chunk.type === "tool") {
-        setCurrentChunks((prev) => {
-          const updated = [...prev, chunk];
-          return updated;
-        });
-      } else if (chunk.type === "complete") {
-        // Final report received - capture chunks before clearing
-        setCurrentChunks((prevChunks) => {
-          const finalChunks = [...prevChunks];
-          setMessages((prev) => [
-            ...prev,
-            {
-              role: "assistant",
-              content: chunk.report || "",
-              timestamp: new Date(),
-              chunks: finalChunks,
-            },
-          ]);
-          setIsStreaming(false);
-          return []; // Clear chunks
-        });
-      } else if (chunk.type === "error") {
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: `Error: ${chunk.error || "Unknown error"}`,
-            timestamp: new Date(),
-          },
-        ]);
-        setCurrentChunks([]);
-        setIsStreaming(false);
-      }
+export default function AgentPage() {
+  const [messages, setMessages] = useState<Message[]>([
+    {
+      id: 1,
+      role: "assistant",
+      content: "Hello! I'm your Market Intelligence Agent. I can help you analyze markets, generate reports, and gather competitive intelligence. What would you like to know?",
+      timestamp: new Date().toISOString(),
     },
-    (error) => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          role: "assistant",
-          content: `Error: ${error.message}`,
-          timestamp: new Date(),
-        },
-      ]);
-      setCurrentChunks([]);
-      setIsStreaming(false);
+  ]);
+  const [input, setInput] = useState("");
+  const { executeMission, isLoading: isExecuting, error: executionError } = useMissionExecution();
+  const { refetch: refetchReports } = useReports();
+
+  const handleSend = async () => {
+    if (!input.trim() || isExecuting) return;
+
+    const userMessage: Message = {
+      id: messages.length + 1,
+      role: "user",
+      content: input,
+      timestamp: new Date().toISOString(),
+    };
+
+    setMessages((prev) => [...prev, userMessage]);
+    const currentInput = input;
+    setInput("");
+
+    try {
+      // Execute mission via backend API
+      const request: MissionRequest = {
+        user_input: currentInput,
+      };
+      
+      const result = await executeMission(request);
+
+      // Add assistant response
+      const assistantMessage: Message = {
+        id: messages.length + 2,
+        role: "assistant",
+        content: result.report || "Mission completed successfully.",
+        timestamp: new Date().toISOString(),
+      };
+      
+      setMessages((prev) => [...prev, assistantMessage]);
+
+      // Refresh reports list to show new mission log
+      if (refetchReports) {
+        setTimeout(() => {
+          refetchReports();
+        }, 1000);
+      }
+    } catch (error) {
+      // Handle error
+      const errorMessage: Message = {
+        id: messages.length + 2,
+        role: "assistant",
+        content: `Error: ${error instanceof Error ? error.message : "Failed to execute mission. Please try again."}`,
+        timestamp: new Date().toISOString(),
+      };
+      setMessages((prev) => [...prev, errorMessage]);
     }
-  );
-
-  const handleSubmit = (data: MissionRequest) => {
-    // Add user message
-    setMessages((prev) => [
-      ...prev,
-      {
-        role: "user",
-        content: data.user_input,
-        timestamp: new Date(),
-      },
-    ]);
-
-    // Start streaming
-    setIsStreaming(true);
-    setCurrentChunks([]);
-    streamingMutation.mutate(data);
   };
 
   return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <div className="border-b p-4">
-        <div className="max-w-7xl mx-auto flex items-center gap-4">
-          <Link href="/">
-            <Button variant="ghost" size="icon">
-              <ArrowLeft className="h-4 w-4" />
-            </Button>
-          </Link>
-          <div>
-            <h1 className="text-2xl font-bold">Agent Terminal</h1>
-            <p className="text-sm text-muted-foreground">
-              Interactive mission execution with real-time streaming
-            </p>
+    <div className="min-h-screen bg-background p-8">
+      <div className="max-w-4xl mx-auto space-y-6">
+        <div>
+          <h1 className="text-4xl font-bold text-foreground">Agent Terminal</h1>
+          <p className="text-muted-foreground mt-2">
+            Interact with your Market Intelligence Agent
+          </p>
+          {executionError && (
+            <div className="mt-4 bg-red-500/20 border border-red-500/50 rounded-lg p-3">
+              <p className="text-sm text-red-500">
+                Execution Error: {executionError.message}
+              </p>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-card border border-border rounded-lg h-[600px] flex flex-col">
+          <div className="flex-1 overflow-y-auto p-6 space-y-4">
+            {messages.map((message) => (
+              <div
+                key={message.id}
+                className={`flex items-start space-x-3 ${
+                  message.role === "user" ? "justify-end" : "justify-start"
+                }`}
+              >
+                {message.role === "assistant" && (
+                  <div className="bg-primary/20 p-2 rounded-full">
+                    <Bot className="h-5 w-5 text-primary" />
+                  </div>
+                )}
+                <div
+                  className={`max-w-[80%] rounded-lg p-4 ${
+                    message.role === "user"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-foreground"
+                  }`}
+                >
+                  <p className="text-sm whitespace-pre-wrap">{message.content}</p>
+                  <p className="text-xs opacity-70 mt-2">
+                    {new Date(message.timestamp).toLocaleTimeString()}
+                  </p>
+                </div>
+                {message.role === "user" && (
+                  <div className="bg-primary/20 p-2 rounded-full">
+                    <div className="h-5 w-5 rounded-full bg-primary" />
+                  </div>
+                )}
+              </div>
+            ))}
+            {isExecuting && (
+              <div className="flex items-start space-x-3">
+                <div className="bg-primary/20 p-2 rounded-full">
+                  <Bot className="h-5 w-5 text-primary" />
+                </div>
+                <div className="bg-muted rounded-lg p-4">
+                  <div className="flex items-center space-x-2">
+                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                    <span className="text-sm text-muted-foreground">
+                      Executing mission...
+                    </span>
+                  </div>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="border-t border-border p-4">
+            <div className="flex items-center space-x-2">
+              <input
+                type="text"
+                value={input}
+                onChange={(e) => setInput(e.target.value)}
+                onKeyPress={(e) => e.key === "Enter" && !isExecuting && handleSend()}
+                placeholder="Type your message..."
+                className="flex-1 bg-background border border-input rounded-md px-4 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
+                disabled={isExecuting}
+              />
+              <button
+                onClick={handleSend}
+                disabled={!input.trim() || isExecuting}
+                className="bg-primary text-primary-foreground px-6 py-2 rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
+              >
+                {isExecuting ? (
+                  <>
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    <span>Executing...</span>
+                  </>
+                ) : (
+                  <>
+                    <Send className="h-4 w-4" />
+                    <span>Send</span>
+                  </>
+                )}
+              </button>
+            </div>
           </div>
         </div>
-      </div>
-
-      <div className="flex-1 flex flex-col max-w-7xl mx-auto w-full p-4">
-        <Card className="flex-1 flex flex-col min-h-0">
-          <CardHeader>
-            <CardTitle>Mission Execution</CardTitle>
-          </CardHeader>
-          <CardContent className="flex-1 flex flex-col min-h-0 p-0">
-            <div className="flex-1 overflow-hidden">
-              <MessageList messages={messages} isStreaming={isStreaming} />
-            </div>
-            <div className="border-t p-4">
-              <MissionInput
-                onSubmit={handleSubmit}
-                isLoading={isStreaming || streamingMutation.isPending}
-              />
-            </div>
-          </CardContent>
-        </Card>
       </div>
     </div>
   );

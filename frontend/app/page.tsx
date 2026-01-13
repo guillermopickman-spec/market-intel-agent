@@ -1,109 +1,166 @@
 "use client";
 
-import { StatCard } from "@/components/dashboard/StatCard";
-import { HealthIndicator } from "@/components/dashboard/HealthIndicator";
-import { useHealthCheck, useMissionStats } from "@/lib/queries";
-import { Activity, Database, Zap, TrendingUp } from "lucide-react";
-import Link from "next/link";
-import { Button } from "@/components/ui/button";
+import { Activity, Bot, FileText, TrendingUp, Loader2 } from "lucide-react";
+import { useHealthCheck, useMissionStats, useActivity } from "@/lib/queries";
 
-export default function Dashboard() {
-  const { data: health, isLoading: healthLoading } = useHealthCheck();
-  const { data: stats, isLoading: statsLoading } = useMissionStats();
+export default function Home() {
+  const { data: health, isLoading: healthLoading, error: healthError } = useHealthCheck();
+  const { data: stats, isLoading: statsLoading, error: statsError } = useMissionStats();
+  const { data: activity, isLoading: activityLoading } = useActivity();
+
+  const statCards = [
+    {
+      title: "Active Missions",
+      value: stats?.in_progress?.toString() || "0",
+      description: "Currently running",
+      icon: Bot,
+      color: "text-blue-500",
+      loading: statsLoading,
+    },
+    {
+      title: "Reports Generated",
+      value: stats?.total?.toString() || "0",
+      description: "Total missions",
+      icon: FileText,
+      color: "text-green-500",
+      loading: statsLoading,
+    },
+    {
+      title: "Success Rate",
+      value: stats ? `${stats.success_rate.toFixed(1)}%` : "0%",
+      description: "Mission completion",
+      icon: TrendingUp,
+      color: "text-purple-500",
+      loading: statsLoading,
+    },
+    {
+      title: "System Health",
+      value: health?.status === "healthy" ? "Healthy" : health?.status || "Unknown",
+      description: health ? `${health.database}, ${health.chromadb}` : "Checking...",
+      icon: Activity,
+      color: health?.status === "healthy" ? "text-emerald-500" : "text-yellow-500",
+      loading: healthLoading,
+    },
+  ];
 
   return (
     <div className="min-h-screen bg-background p-8">
       <div className="max-w-7xl mx-auto space-y-8">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-4xl font-bold">Market Intelligence Agent</h1>
-            <p className="text-muted-foreground mt-2">
-              Autonomous Market Auditing & Technical Reconnaissance Engine
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Link href="/agent">
-              <Button>Agent Terminal</Button>
-            </Link>
-            <Link href="/reports">
-              <Button variant="outline">Reports</Button>
-            </Link>
-          </div>
+        <div>
+          <h1 className="text-4xl font-bold text-foreground">
+            Dashboard
+          </h1>
+          <p className="text-muted-foreground mt-2">
+            Overview of your Market Intelligence Agent
+          </p>
+          {(healthError || statsError) && (
+            <div className="mt-4 bg-yellow-500/20 border border-yellow-500/50 rounded-lg p-3">
+              <p className="text-sm text-yellow-500">
+                {healthError && `Health check: ${healthError.message}`}
+                {healthError && statsError && " • "}
+                {statsError && `Stats: ${statsError.message}`}
+              </p>
+            </div>
+          )}
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <StatCard
-            title="System Health"
-            value={<HealthIndicator status={health?.status || "loading"} />}
-            icon={Activity}
-            isLoading={healthLoading}
-          />
-          <StatCard
-            title="Total Missions"
-            value={stats?.total_missions || 0}
-            description="All time executions"
-            icon={Database}
-            isLoading={statsLoading}
-          />
-          <StatCard
-            title="Completed"
-            value={stats?.completed_missions || 0}
-            description="Successful missions"
-            icon={Zap}
-            isLoading={statsLoading}
-          />
-          <StatCard
-            title="Failed"
-            value={stats?.failed_missions || 0}
-            description="Failed missions"
-            icon={TrendingUp}
-            isLoading={statsLoading}
-          />
-        </div>
-
-        {health && (
-          <div className="grid gap-4 md:grid-cols-3">
-            <StatCard
-              title="Database Status"
-              value={health.database === "up" ? "Online" : "Offline"}
-              description={health.database}
-            />
-            <StatCard
-              title="ChromaDB Status"
-              value={health.chromadb === "up" ? "Online" : "Offline"}
-              description={health.chromadb}
-            />
-            <StatCard
-              title="Server Time"
-              value={new Date(health.server_time).toLocaleTimeString()}
-              description="UTC"
-            />
-          </div>
-        )}
-
-        {stats && stats.recent_price_data && stats.recent_price_data.length > 0 && (
-          <div className="mt-8">
-            <h2 className="text-2xl font-semibold mb-4">Recent Price Data</h2>
-            <div className="grid gap-2">
-              {stats.recent_price_data.map((item, idx) => (
-                <div
-                  key={idx}
-                  className="flex items-center justify-between p-4 border rounded-lg"
-                >
-                  <div>
-                    <p className="font-medium">{item.product}</p>
-                    <p className="text-sm text-muted-foreground">
-                      {item.source}
-                    </p>
-                  </div>
-                  <p className="text-lg font-bold text-primary">
-                    {item.price}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {statCards.map((stat) => {
+            const Icon = stat.icon;
+            return (
+              <div
+                key={stat.title}
+                className="bg-card border border-border rounded-lg p-6 space-y-2"
+              >
+                <div className="flex items-center justify-between">
+                  <Icon className={`h-8 w-8 ${stat.color}`} />
+                  {stat.loading && (
+                    <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                  )}
+                </div>
+                <div>
+                  <p className="text-3xl font-bold text-foreground">
+                    {stat.loading ? "..." : stat.value}
+                  </p>
+                  <p className="text-sm font-medium text-foreground">
+                    {stat.title}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    {stat.description}
                   </p>
                 </div>
-              ))}
+              </div>
+            );
+          })}
+        </div>
+
+        <div className="bg-card border border-border rounded-lg p-6">
+          <h2 className="text-2xl font-bold text-foreground mb-4">
+            Recent Activity
+          </h2>
+          {activityLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
             </div>
-          </div>
-        )}
+          ) : activity && activity.length > 0 ? (
+            <div className="space-y-4">
+              {activity.map((item) => {
+                const getStatusColor = (status: string) => {
+                  switch (status) {
+                    case "completed":
+                      return "bg-green-500/20 text-green-500";
+                    case "active":
+                      return "bg-blue-500/20 text-blue-500";
+                    case "processing":
+                      return "bg-yellow-500/20 text-yellow-500";
+                    case "failed":
+                      return "bg-red-500/20 text-red-500";
+                    default:
+                      return "bg-muted text-muted-foreground";
+                  }
+                };
+
+                const formatTimeAgo = (timestamp: string) => {
+                  const date = new Date(timestamp);
+                  const now = new Date();
+                  const diffMs = now.getTime() - date.getTime();
+                  const diffMins = Math.floor(diffMs / 60000);
+                  const diffHours = Math.floor(diffMs / 3600000);
+                  const diffDays = Math.floor(diffMs / 86400000);
+
+                  if (diffMins < 60) return `${diffMins} minutes ago`;
+                  if (diffHours < 24) return `${diffHours} hours ago`;
+                  return `${diffDays} days ago`;
+                };
+
+                return (
+                  <div
+                    key={item.id}
+                    className="flex items-center justify-between py-3 border-b border-border last:border-b-0"
+                  >
+                    <div>
+                      <p className="text-foreground font-medium">{item.title}</p>
+                      <p className="text-sm text-muted-foreground">
+                        {formatTimeAgo(item.timestamp)}
+                      </p>
+                    </div>
+                    <span
+                      className={`px-3 py-1 rounded-full text-xs font-medium ${getStatusColor(
+                        item.status
+                      )}`}
+                    >
+                      {item.status}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+            <div className="text-center text-muted-foreground py-8">
+              No recent activity
+            </div>
+          )}
+        </div>
       </div>
     </div>
   );

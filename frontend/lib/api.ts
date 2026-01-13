@@ -1,151 +1,176 @@
-// Use relative /api path in production (Vercel) or when NEXT_PUBLIC_API_URL is not set
-// Fallback to localhost for local development
-const getApiUrl = (): string => {
-  // If explicitly set, use that
-  if (process.env.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL;
-  }
-  
-  // In production (Vercel), use relative path to serverless function
-  // This will be handled by vercel.json rewrites
-  if (process.env.NODE_ENV === 'production') {
-    return '/api';
-  }
-  
-  // Local development fallback
-  return 'http://localhost:8000';
+// API utility for making requests to the backend
+// Supports both real API calls and mock mode
+
+const API_TIMEOUT = 10000; // 10 seconds
+
+const getApiUrl = () => {
+  if (typeof window === "undefined") return "";
+  return process.env.NEXT_PUBLIC_API_URL || "";
 };
 
-const API_URL = getApiUrl();
+const useMockApi = () => {
+  return process.env.NEXT_PUBLIC_USE_MOCK_API === "true";
+};
 
-export interface ApiError {
-  detail: string;
-  status?: number;
-}
+const isDevelopment = () => {
+  return process.env.NODE_ENV === "development";
+};
 
-export class ApiClientError extends Error {
-  constructor(
-    public status: number,
-    public detail: string,
-    public originalError?: unknown
-  ) {
-    super(detail);
-    this.name = 'ApiClientError';
-  }
-}
-
-async function handleResponse<T>(response: Response): Promise<T> {
-  if (!response.ok) {
-    let errorDetail = `HTTP ${response.status}: ${response.statusText}`;
-    try {
-      const errorData = await response.json();
-      errorDetail = errorData.detail || errorDetail;
-    } catch {
-      // If response is not JSON, use status text
-    }
-    throw new ApiClientError(response.status, errorDetail);
-  }
-
-  // Handle empty responses
-  const contentType = response.headers.get('content-type');
-  if (!contentType || !contentType.includes('application/json')) {
-    return {} as T;
-  }
-
-  return response.json();
-}
-
-export async function apiRequest<T>(
-  endpoint: string,
-  options: RequestInit = {}
-): Promise<T> {
-  const url = `${API_URL}${endpoint}`;
-  
-  const config: RequestInit = {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-  };
-
-  try {
-    const response = await fetch(url, config);
-    return handleResponse<T>(response);
-  } catch (error) {
-    if (error instanceof ApiClientError) {
-      throw error;
-    }
-    throw new ApiClientError(0, `Network error: ${error instanceof Error ? error.message : 'Unknown error'}`, error);
-  }
-}
-
-export async function apiStream(
-  endpoint: string,
+// Create a fetch with timeout
+const fetchWithTimeout = async (
+  url: string,
   options: RequestInit = {},
-  onChunk: (chunk: string) => void,
-  onError?: (error: Error) => void
-): Promise<void> {
-  const url = `${API_URL}${endpoint}`;
-  
-  const config: RequestInit = {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      ...options.headers,
-    },
-  };
+  timeout: number = API_TIMEOUT
+): Promise<Response> => {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeout);
 
   try {
-    const response = await fetch(url, config);
-    
-    if (!response.ok) {
-      const errorData = await response.json().catch(() => ({}));
-      throw new ApiClientError(
-        response.status,
-        errorData.detail || `HTTP ${response.status}: ${response.statusText}`
-      );
-    }
-
-    const reader = response.body?.getReader();
-    if (!reader) {
-      throw new Error('Response body is not readable');
-    }
-
-    const decoder = new TextDecoder();
-    let buffer = '';
-
-    while (true) {
-      const { done, value } = await reader.read();
-      
-      if (done) break;
-
-      buffer += decoder.decode(value, { stream: true });
-      const lines = buffer.split('\n');
-      buffer = lines.pop() || '';
-
-      for (const line of lines) {
-        if (line.trim()) {
-          try {
-            onChunk(line.trim());
-          } catch (error) {
-            if (onError) {
-              onError(error instanceof Error ? error : new Error(String(error)));
-            }
-          }
-        }
-      }
-    }
-
-    // Process remaining buffer
-    if (buffer.trim()) {
-      onChunk(buffer.trim());
-    }
+    const response = await fetch(url, {
+      ...options,
+      signal: controller.signal,
+    });
+    clearTimeout(timeoutId);
+    return response;
   } catch (error) {
-    if (onError) {
-      onError(error instanceof Error ? error : new Error(String(error)));
-    } else {
-      throw error;
+    clearTimeout(timeoutId);
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Request timeout after ${timeout}ms`);
     }
+    throw error;
   }
-}
+};
+
+// Enhanced error handling
+const handleApiError = (error: unknown, endpoint: string): Error => {
+  if (error instanceof Error) {
+    // Network errors
+    if (error.message.includes("timeout") || error.message.includes("aborted")) {
+      const apiUrl = getApiUrl();
+      return new Error(`Request to ${endpoint} timed out. Backend may be slow or unavailable. ${apiUrl ? `Trying: ${apiUrl}${endpoint}` : "API URL not configured."}`);
+    }
+    if (error.message.includes("Failed to fetch") || error.message.includes("NetworkError")) {
+      const apiUrl = getApiUrl();
+      if (!apiUrl) {
+        return new Error(`NEXT_PUBLIC_API_URL is not configured. Please set it in .env.local or environment variables.`);
+      }
+      return new Error(`Cannot connect to backend at ${apiUrl}${endpoint}. Check if the backend is running and accessible. Error: ${error.message}`);
+    }
+    // CORS errors
+    if (error.message.includes("CORS") || error.message.includes("cross-origin")) {
+      return new Error(`CORS error: Backend may not allow requests from ${typeof window !== "undefined" ? window.location.origin : "this origin"}. Check backend CORS configuration.`);
+    }
+    return error;
+  }
+  return new Error(`Unknown error occurred while calling ${endpoint}`);
+};
+
+export const api = {
+  async get<T>(endpoint: string): Promise<T> {
+    if (useMockApi()) {
+      // In mock mode, we'll handle this in queries.ts
+      throw new Error("Mock API should be handled in queries.ts");
+    }
+
+    const apiUrl = getApiUrl();
+    if (!apiUrl) {
+      if (isDevelopment()) {
+        console.error("[API] NEXT_PUBLIC_API_URL is not configured. Check your .env.local file.");
+      }
+      throw new Error("NEXT_PUBLIC_API_URL is not configured");
+    }
+
+    const url = `${apiUrl}${endpoint}`;
+
+    if (isDevelopment()) {
+      console.log(`[API] GET ${url}`);
+      console.log(`[API] Environment check - NEXT_PUBLIC_API_URL: ${process.env.NEXT_PUBLIC_API_URL || "NOT SET"}`);
+      console.log(`[API] Environment check - NEXT_PUBLIC_USE_MOCK_API: ${process.env.NEXT_PUBLIC_USE_MOCK_API || "NOT SET"}`);
+    }
+
+    try {
+      const response = await fetchWithTimeout(url, {
+        method: "GET",
+        headers: {
+          "Content-Type": "application/json",
+        },
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => response.statusText);
+        throw new Error(
+          `API request failed: ${response.status} ${response.statusText}${errorText ? ` - ${errorText}` : ""}`
+        );
+      }
+
+      const data = await response.json();
+
+      if (isDevelopment()) {
+        console.log(`[API] GET ${url} - Success`, data);
+      }
+
+      return data as T;
+    } catch (error) {
+      const enhancedError = handleApiError(error, endpoint);
+      if (isDevelopment()) {
+        console.error(`[API] GET ${url} - Error`, enhancedError);
+      }
+      throw enhancedError;
+    }
+  },
+
+  async post<T>(endpoint: string, data: unknown): Promise<T> {
+    if (useMockApi()) {
+      throw new Error("Mock API should be handled in queries.ts");
+    }
+
+    const apiUrl = getApiUrl();
+    if (!apiUrl) {
+      throw new Error("NEXT_PUBLIC_API_URL is not configured");
+    }
+
+    const url = `${apiUrl}${endpoint}`;
+
+    if (isDevelopment()) {
+      console.log(`[API] POST ${url}`, data);
+    }
+
+    try {
+      // Increase timeout for mission execution (can take longer)
+      const timeout = endpoint.includes("/execute") ? 120000 : API_TIMEOUT; // 2 minutes for execute
+      
+      const response = await fetchWithTimeout(
+        url,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(data),
+        },
+        timeout
+      );
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => response.statusText);
+        throw new Error(
+          `API request failed: ${response.status} ${response.statusText}${errorText ? ` - ${errorText}` : ""}`
+        );
+      }
+
+      const result = await response.json();
+
+      if (isDevelopment()) {
+        console.log(`[API] POST ${url} - Success`, result);
+      }
+
+      return result as T;
+    } catch (error) {
+      const enhancedError = handleApiError(error, endpoint);
+      if (isDevelopment()) {
+        console.error(`[API] POST ${url} - Error`, enhancedError);
+      }
+      throw enhancedError;
+    }
+  },
+};
