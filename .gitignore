@@ -62,3 +62,16 @@ Thumbs.db
 # === DOCKER ===
 # Ignore local docker data but keep the Dockerfile
 .dockerignore
+
+# === FRONTEND BUILD ARTIFACTS ===
+frontend/node_modules/
+frontend/.next/
+frontend/.vercel/
+frontend/.env.local
+frontend/.env*.local
+frontend/package-lock.json
+
+# === TEST/UNUSED DIRECTORIES ===
+MIA_VercelTest/
+.cursor/
+plan.txt
