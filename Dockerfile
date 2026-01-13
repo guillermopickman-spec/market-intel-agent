@@ -30,7 +30,6 @@ RUN pip config set global.timeout 600
 RUN --mount=type=cache,target=/root/.cache/pip \
     --mount=type=cache,target=/root/.cache/pypoetry \
     poetry config installer.max-workers 4 && \
-    poetry config installer.no-binary :all: || true && \
     poetry install --no-interaction --no-ansi --no-root --only=main
 
 # Install Playwright and Chromium with cache mount (keeps browser cache between builds)
