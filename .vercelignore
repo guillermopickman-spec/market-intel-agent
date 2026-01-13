@@ -1,0 +1,54 @@
+# Ignore all Python/backend files - Vercel should only build frontend
+# This file tells Vercel to ignore these files during deployment
+
+# Python files
+*.py
+*.pyc
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Python package management
+poetry.lock
+pyproject.toml
+requirements.txt
+Pipfile
+Pipfile.lock
+setup.py
+setup.cfg
+
+# Backend directories
+alembic/
+api/
+chroma/
+core/
+models/
+routers/
+services/
+embeddings/
+
+# Backend files
+database.py
+main.py
+
+# Docker & deployment
+Dockerfile
+docker-compose.yml
+render.yaml
+
+# Environment files
+.env
+.env.*
+!.env.example
+
+# Logs
+*.log
+logs/
+
+# Other
+.cursor/
+examples/
+MIA_VercelTest/
+plan.txt
+README.md
+.gitignore
