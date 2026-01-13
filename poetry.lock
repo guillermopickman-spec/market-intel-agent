@@ -1586,6 +1586,21 @@ lingua = ["lingua"]
 testing = ["pytest"]
 
 [[package]]
+name = "mangum"
+version = "0.20.0"
+description = "AWS Lambda support for ASGI applications"
+optional = false
+python-versions = ">=3.9"
+groups = ["main"]
+files = [
+    {file = "mangum-0.20.0-py3-none-any.whl", hash = "sha256:c945eadc41916f73b6086c0c69935ef4b1d23d27de8dc74ed47b20e204335407"},
+    {file = "mangum-0.20.0.tar.gz", hash = "sha256:0050447b60d832dcc45cc9d917c9e0f4e9174e2d9630f621d567510d51d286bd"},
+]
+
+[package.dependencies]
+typing-extensions = "*"
+
+[[package]]
 name = "markdown-it-py"
 version = "4.0.0"
 description = "Python port of markdown-it. Markdown parsing, done right!"
@@ -5156,4 +5171,4 @@ type = ["pytest-mypy"]
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11"
-content-hash = "3617151e1b51db46571055b6e9ef636cde3b143e8e70244de50f9837525531b6"
+content-hash = "4f147f92aedba1dceaacda8b5f6b2a7f85620edcf219912dc63557e1ef5db033"
