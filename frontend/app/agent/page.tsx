@@ -1,8 +1,8 @@
 "use client";
 
-import { Bot, Send, Loader2 } from "lucide-react";
-import { useState } from "react";
-import { useMissionExecution, useReports, type MissionRequest } from "@/lib/queries";
+import { Bot, Send, Loader2, CheckCircle2, Circle, Search, Globe } from "lucide-react";
+import { useState, useEffect } from "react";
+import { useMissionExecutionStream, useReports, type MissionRequest } from "@/lib/queries";
 
 type Message = {
   id: number;
@@ -21,11 +21,87 @@ export default function AgentPage() {
     },
   ]);
   const [input, setInput] = useState("");
-  const { executeMission, isLoading: isExecuting, error: executionError } = useMissionExecution();
+  const {
+    executeMissionStream,
+    cancelStream,
+    isStreaming,
+    currentThinking,
+    toolExecutions,
+    finalReport,
+    error: executionError,
+  } = useMissionExecutionStream();
   const { refetch: refetchReports } = useReports();
+  const [streamingMessageId, setStreamingMessageId] = useState<number | null>(null);
+
+  // Update streaming message when state changes
+  useEffect(() => {
+    if (isStreaming && streamingMessageId !== null) {
+      setMessages((prev) => {
+        const updated = [...prev];
+        const index = updated.findIndex((m) => m.id === streamingMessageId);
+        
+        if (index >= 0) {
+          let content = "";
+          
+          // Add thinking steps
+          if (currentThinking) {
+            content += `🧠 ${currentThinking}\n\n`;
+          }
+          
+          // Add tool executions
+          if (toolExecutions.length > 0) {
+            content += "**Tools Executed:**\n";
+            toolExecutions.forEach((tool) => {
+              const icon = tool.status === "completed" ? "✅" : "⏳";
+              const toolName = tool.tool === "web_search" ? "Web Search" : 
+                              tool.tool === "web_research" ? "Web Research" : 
+                              tool.tool;
+              content += `${icon} ${toolName}\n`;
+            });
+            content += "\n";
+          }
+          
+          // Add final report if available
+          if (finalReport) {
+            content = finalReport;
+          }
+          
+          updated[index] = {
+            ...updated[index],
+            content: content || "Processing...",
+          };
+        }
+        
+        return updated;
+      });
+    } else if (!isStreaming && finalReport && streamingMessageId !== null) {
+      // Finalize the message with the complete report
+      setMessages((prev) => {
+        const updated = [...prev];
+        const index = updated.findIndex((m) => m.id === streamingMessageId);
+        
+        if (index >= 0) {
+          updated[index] = {
+            ...updated[index],
+            content: finalReport,
+          };
+        }
+        
+        return updated;
+      });
+      setStreamingMessageId(null);
+      
+      // Refresh reports list
+      if (refetchReports) {
+        setTimeout(() => {
+          refetchReports();
+        }, 1000);
+      }
+    }
+  }, [isStreaming, currentThinking, toolExecutions, finalReport, streamingMessageId, refetchReports]);
 
   const handleSend = async () => {
-    if (!input.trim() || isExecuting) return;
+    if (!input.trim() || isStreaming) return;
 
     const userMessage: Message = {
       id: messages.length + 1,
@@ -38,39 +114,42 @@ export default function AgentPage() {
     const currentInput = input;
     setInput("");
 
+    // Create placeholder assistant message for streaming
+    const assistantMessageId = messages.length + 2;
+    const assistantMessage: Message = {
+      id: assistantMessageId,
+      role: "assistant",
+      content: "Starting mission execution...",
+      timestamp: new Date().toISOString(),
+    };
+    
+    setMessages((prev) => [...prev, assistantMessage]);
+    setStreamingMessageId(assistantMessageId);
+
     try {
-      // Execute mission via backend API
+      // Execute mission via streaming API
       const request: MissionRequest = {
         user_input: currentInput,
       };
       
-      const result = await executeMission(request);
-
-      // Add assistant response
-      const assistantMessage: Message = {
-        id: messages.length + 2,
-        role: "assistant",
-        content: result.report || "Mission completed successfully.",
-        timestamp: new Date().toISOString(),
-      };
-      
-      setMessages((prev) => [...prev, assistantMessage]);
-
-      // Refresh reports list to show new mission log
-      if (refetchReports) {
-        setTimeout(() => {
-          refetchReports();
-        }, 1000);
-      }
+      await executeMissionStream(request);
     } catch (error) {
       // Handle error
       const errorMessage: Message = {
-        id: messages.length + 2,
+        id: assistantMessageId,
         role: "assistant",
         content: `Error: ${error instanceof Error ? error.message : "Failed to execute mission. Please try again."}`,
         timestamp: new Date().toISOString(),
       };
-      setMessages((prev) => [...prev, errorMessage]);
+      setMessages((prev) => {
+        const updated = [...prev];
+        const index = updated.findIndex((m) => m.id === assistantMessageId);
+        if (index >= 0) {
+          updated[index] = errorMessage;
+        }
+        return updated;
+      });
+      setStreamingMessageId(null);
     }
   };
 
@@ -87,6 +166,27 @@ export default function AgentPage() {
               <p className="text-sm text-red-500">
                 Execution Error: {executionError.message}
               </p>
+            </div>
+          )}
+          {isStreaming && toolExecutions.length > 0 && (
+            <div className="mt-4 bg-blue-500/10 border border-blue-500/50 rounded-lg p-3">
+              <p className="text-sm font-semibold text-blue-500 mb-2">Active Tools:</p>
+              <div className="space-y-1">
+                {toolExecutions.map((tool, idx) => (
+                  <div key={idx} className="flex items-center space-x-2 text-sm">
+                    {tool.status === "completed" ? (
+                      <CheckCircle2 className="h-4 w-4 text-green-500" />
+                    ) : (
+                      <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
+                    )}
+                    <span className="text-muted-foreground">
+                      {tool.tool === "web_search" ? "Web Search" : 
+                       tool.tool === "web_research" ? "Web Research" : 
+                       tool.tool}
+                    </span>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -124,18 +224,17 @@ export default function AgentPage() {
                 )}
               </div>
             ))}
-            {isExecuting && (
+            {isStreaming && currentThinking && (
               <div className="flex items-start space-x-3">
                 <div className="bg-primary/20 p-2 rounded-full">
-                  <Bot className="h-5 w-5 text-primary" />
+                  <Bot className="h-5 w-5 text-primary animate-pulse" />
                 </div>
-                <div className="bg-muted rounded-lg p-4">
-                  <div className="flex items-center space-x-2">
-                    <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                    <span className="text-sm text-muted-foreground">
-                      Executing mission...
-                    </span>
+                <div className="bg-muted rounded-lg p-4 max-w-[80%]">
+                  <div className="flex items-center space-x-2 mb-2">
+                    <Loader2 className="h-4 w-4 animate-spin text-primary" />
+                    <span className="text-xs font-semibold text-primary">Thinking...</span>
                   </div>
+                  <p className="text-sm text-muted-foreground">{currentThinking}</p>
                 </div>
               </div>
             )}
@@ -147,20 +246,20 @@ export default function AgentPage() {
                 type="text"
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
-                onKeyPress={(e) => e.key === "Enter" && !isExecuting && handleSend()}
+                onKeyPress={(e) => e.key === "Enter" && !isStreaming && handleSend()}
                 placeholder="Type your message..."
                 className="flex-1 bg-background border border-input rounded-md px-4 py-2 text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring"
-                disabled={isExecuting}
+                disabled={isStreaming}
               />
               <button
                 onClick={handleSend}
-                disabled={!input.trim() || isExecuting}
+                disabled={!input.trim() || isStreaming}
                 className="bg-primary text-primary-foreground px-6 py-2 rounded-md hover:bg-primary/90 disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-2"
               >
-                {isExecuting ? (
+                {isStreaming ? (
                   <>
                     <Loader2 className="h-4 w-4 animate-spin" />
-                    <span>Executing...</span>
+                    <span>Streaming...</span>
                   </>
                 ) : (
                   <>
@@ -169,6 +268,14 @@ export default function AgentPage() {
                   </>
                 )}
               </button>
+              {isStreaming && (
+                <button
+                  onClick={cancelStream}
+                  className="bg-red-500/20 text-red-500 px-4 py-2 rounded-md hover:bg-red-500/30 flex items-center space-x-2"
+                >
+                  <span>Cancel</span>
+                </button>
+              )}
             </div>
           </div>
         </div>

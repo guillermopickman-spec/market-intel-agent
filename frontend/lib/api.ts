@@ -185,4 +185,139 @@ export const api = {
       throw enhancedError;
     }
   },
+
+  async postStream<T>(
+    endpoint: string,
+    data: unknown,
+    onMessage: (message: T) => void,
+    onError?: (error: Error) => void
+  ): Promise<() => void> {
+    if (useMockApi()) {
+      throw new Error("Streaming not supported in mock mode");
+    }
+
+    const apiUrl = getApiUrl();
+    if (!apiUrl) {
+      const error = new Error("NEXT_PUBLIC_API_URL is not configured");
+      if (onError) onError(error);
+      throw error;
+    }
+
+    // Ensure endpoint starts with / and API URL doesn't end with /
+    const normalizedEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+    const url = `${apiUrl}${normalizedEndpoint}`;
+
+    // Log streaming request
+    console.log(`[API] POST STREAM ${url}`, data);
+
+    // Create abort controller for cleanup
+    const controller = new AbortController();
+    let isAborted = false;
+
+    // Stream timeout: 5 minutes for long missions
+    const STREAM_TIMEOUT = 300000; // 5 minutes
+    const timeoutId = setTimeout(() => {
+      if (!isAborted) {
+        controller.abort();
+        const timeoutError = new Error(`Stream timeout after ${STREAM_TIMEOUT}ms`);
+        if (onError) onError(timeoutError);
+      }
+    }, STREAM_TIMEOUT);
+
+    // Start the stream
+    (async () => {
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(data),
+          signal: controller.signal,
+        });
+
+        if (!response.ok) {
+          const errorText = await response.text().catch(() => response.statusText);
+          const errorMessage = `Stream request failed: ${response.status} ${response.statusText}${errorText ? ` - ${errorText}` : ""}`;
+          console.error(`[API] POST STREAM ${url} failed:`, errorMessage);
+          const error = new Error(errorMessage);
+          if (onError) onError(error);
+          return;
+        }
+
+        if (!response.body) {
+          const error = new Error("Response body is null");
+          if (onError) onError(error);
+          return;
+        }
+
+        // Read the stream
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+
+        try {
+          while (true) {
+            const { done, value } = await reader.read();
+
+            if (done) {
+              // Check if there's remaining buffer data
+              if (buffer.trim()) {
+                try {
+                  const message = JSON.parse(buffer.trim()) as T;
+                  onMessage(message);
+                } catch (parseError) {
+                  console.warn("[API] Failed to parse final buffer:", buffer, parseError);
+                }
+              }
+              break;
+            }
+
+            // Decode chunk and add to buffer
+            buffer += decoder.decode(value, { stream: true });
+
+            // Process complete lines (NDJSON format)
+            const lines = buffer.split("\n");
+            // Keep the last incomplete line in buffer
+            buffer = lines.pop() || "";
+
+            // Parse each complete line
+            for (const line of lines) {
+              const trimmedLine = line.trim();
+              if (!trimmedLine) continue;
+
+              try {
+                const message = JSON.parse(trimmedLine) as T;
+                onMessage(message);
+              } catch (parseError) {
+                console.warn("[API] Failed to parse JSON line:", trimmedLine, parseError);
+                // Continue processing other lines
+              }
+            }
+          }
+        } finally {
+          reader.releaseLock();
+        }
+      } catch (error) {
+        if (isAborted) {
+          // Abort is expected, don't report as error
+          return;
+        }
+
+        clearTimeout(timeoutId);
+        const enhancedError = handleApiError(error, endpoint);
+        console.error(`[API] POST STREAM ${url} - Error`, enhancedError);
+        if (onError) onError(enhancedError);
+      } finally {
+        clearTimeout(timeoutId);
+      }
+    })();
+
+    // Return cleanup function
+    return () => {
+      isAborted = true;
+      clearTimeout(timeoutId);
+      controller.abort();
+    };
+  },
 };

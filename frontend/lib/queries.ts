@@ -27,6 +27,23 @@ export interface MissionExecutionResponse {
   trace: Array<{ tool: string; status?: string; result?: string }>;
 }
 
+// Stream message types
+export type StreamMessage = 
+  | { type: "thinking"; content: string }
+  | { type: "tool"; tool: string; result: string }
+  | { type: "complete"; report: string }
+  | { type: "error"; error: string };
+
+// Streaming state type
+export interface StreamingState {
+  isStreaming: boolean;
+  currentThinking: string;
+  toolExecutions: Array<{ tool: string; status: string; result?: string }>;
+  partialReport: string;
+  finalReport: string | null;
+  error: Error | null;
+}
+
 // Mission execution hook for Phase 5 (non-streaming)
 export function useMissionExecution() {
   const [isLoading, setIsLoading] = useState(false);
@@ -64,6 +81,164 @@ export function useMissionExecution() {
   };
 
   return { executeMission, isLoading, error };
+}
+
+// Mission execution hook for Phase 6 (streaming)
+export function useMissionExecutionStream() {
+  const [isStreaming, setIsStreaming] = useState(false);
+  const [currentThinking, setCurrentThinking] = useState("");
+  const [toolExecutions, setToolExecutions] = useState<Array<{ tool: string; status: string; result?: string }>>([]);
+  const [partialReport, setPartialReport] = useState("");
+  const [finalReport, setFinalReport] = useState<string | null>(null);
+  const [error, setError] = useState<Error | null>(null);
+  const [abortStream, setAbortStream] = useState<(() => void) | null>(null);
+
+  const executeMissionStream = (
+    request: MissionRequest,
+    onUpdate?: (state: StreamingState) => void
+  ): Promise<string> => {
+    return new Promise((resolve, reject) => {
+      // Reset state
+      setIsStreaming(true);
+      setCurrentThinking("");
+      setToolExecutions([]);
+      setPartialReport("");
+      setFinalReport(null);
+      setError(null);
+
+      if (useMockApi()) {
+        // Mock streaming for testing
+        const mockSteps = [
+          { type: "thinking", content: "Analyzing mission..." },
+          { type: "thinking", content: "Plan generated with 3 steps" },
+          { type: "tool", tool: "web_search", result: "Executing web_search..." },
+          { type: "tool", tool: "web_search", result: "Completed: Found results..." },
+          { type: "thinking", content: "Synthesizing final report..." },
+          { type: "complete", report: `Mock mission execution result for: "${request.user_input}"\n\nThis is a mock response. Set NEXT_PUBLIC_USE_MOCK_API=false to use real backend.` },
+        ];
+
+        let stepIndex = 0;
+        const interval = setInterval(() => {
+          if (stepIndex >= mockSteps.length) {
+            clearInterval(interval);
+            setIsStreaming(false);
+            const finalReport = (mockSteps[mockSteps.length - 1] as { type: "complete"; report: string }).report;
+            setFinalReport(finalReport);
+            resolve(finalReport);
+            return;
+          }
+
+          const step = mockSteps[stepIndex] as StreamMessage;
+          handleStreamMessage(step, onUpdate);
+          stepIndex++;
+        }, 1000);
+
+        setAbortStream(() => () => {
+          clearInterval(interval);
+          setIsStreaming(false);
+        });
+      } else {
+        // Real streaming API call
+        const cleanup = api.postStream<StreamMessage>(
+          "/execute/stream",
+          request,
+          (message) => {
+            handleStreamMessage(message, onUpdate);
+            
+            // Handle completion
+            if (message.type === "complete") {
+              setIsStreaming(false);
+              setFinalReport(message.report);
+              setAbortStream(null);
+              resolve(message.report);
+            }
+            
+            // Handle error
+            if (message.type === "error") {
+              setIsStreaming(false);
+              const error = new Error(message.error);
+              setError(error);
+              setAbortStream(null);
+              reject(error);
+            }
+          },
+          (err) => {
+            setIsStreaming(false);
+            setError(err);
+            setAbortStream(null);
+            reject(err);
+          }
+        );
+
+        setAbortStream(() => cleanup);
+      }
+    });
+  };
+
+  const handleStreamMessage = (message: StreamMessage, onUpdate?: (state: StreamingState) => void) => {
+    switch (message.type) {
+      case "thinking":
+        setCurrentThinking(message.content);
+        break;
+      
+      case "tool":
+        setToolExecutions((prev) => {
+          const existing = prev.findIndex((t) => t.tool === message.tool && t.status === "executing");
+          
+          if (existing >= 0) {
+            // Update existing execution
+            const updated = [...prev];
+            updated[existing] = {
+              tool: message.tool,
+              status: message.result.includes("Executing") ? "executing" : "completed",
+              result: message.result,
+            };
+            return updated;
+          } else {
+            // Add new execution
+            return [
+              ...prev,
+              {
+                tool: message.tool,
+                status: message.result.includes("Executing") ? "executing" : "completed",
+                result: message.result,
+              },
+            ];
+          }
+        });
+        break;
+      
+      case "complete":
+        setFinalReport(message.report);
+        break;
+      
+      case "error":
+        setError(new Error(message.error));
+        break;
+    }
+    
+    // Note: onUpdate callback is optional and can be used by components
+    // that need immediate notification. Most components will read state directly.
+  };
+
+  const cancelStream = () => {
+    if (abortStream) {
+      abortStream();
+      setIsStreaming(false);
+      setAbortStream(null);
+    }
+  };
+
+  return {
+    executeMissionStream,
+    cancelStream,
+    isStreaming,
+    currentThinking,
+    toolExecutions,
+    partialReport,
+    finalReport,
+    error,
+  };
 }
 
 // Health check hook
