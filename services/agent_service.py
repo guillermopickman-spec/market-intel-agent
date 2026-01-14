@@ -163,31 +163,34 @@ class AgentService:
             (r'(£[\d,]+(?:\.\d+)?)', '£'),   # Pound amounts
         ]
         
-        # Product names to look for
-        product_keywords = ['h100', 'h200', 'mi300', 'blackwell', 'rubin', 'nvidia', 'amd', 'gpu']
-        
         for section in sections:
             section_lower = section.lower()
             
-            # Extract product name from section
+            # Extract product name from section - look for common patterns
+            # Try to find product names near price mentions
             product_name = None
-            for keyword in product_keywords:
-                if keyword in section_lower:
-                    # Try to find full product name (e.g., "NVIDIA H100")
-                    match = re.search(rf'(\w+\s+)?{keyword}(\s+\w+)?', section, re.IGNORECASE)
-                    if match:
-                        product_name = match.group(0).strip()
-                        break
             
+            # Look for product names in title/first line
+            lines = section.split('\n')
+            if lines:
+                first_line = lines[0].strip()
+                # Extract product name from title (before colon or first 50 chars)
+                if ':' in first_line:
+                    product_name = first_line.split(':')[0].strip()[:50]
+                elif len(first_line) > 0 and len(first_line) < 100:
+                    # Use first line if it looks like a product name
+                    product_name = first_line[:50]
+            
+            # If no product name found, try to extract from context around prices
             if not product_name:
-                # Try to extract from title or first line
-                lines = section.split('\n')
-                if lines:
-                    first_line = lines[0]
-                    for keyword in product_keywords:
-                        if keyword in first_line.lower():
-                            product_name = first_line.split(':')[0].strip()[:50]  # Limit length
-                            break
+                # Look for capitalized words near price mentions (likely product names)
+                price_context_pattern = r'([A-Z][a-zA-Z0-9\s]{2,30})\s*[:\-]?\s*[\$€£]'
+                matches = re.finditer(price_context_pattern, section)
+                for match in matches:
+                    potential_name = match.group(1).strip()
+                    if len(potential_name) > 2 and len(potential_name) < 50:
+                        product_name = potential_name
+                        break
             
             # Extract prices from section
             for pattern, currency in price_patterns:
@@ -327,8 +330,13 @@ class AgentService:
             # Check if section contains price information
             has_price = any(re.search(pattern, section_lower, re.IGNORECASE) for pattern in price_patterns)
             
-            # Check if section contains product-related keywords
-            has_product_info = any(keyword in section_lower for keyword in ['nvidia', 'amd', 'gpu', 'h100', 'h200', 'mi300', 'blackwell', 'rubin'])
+            # Check if section contains product/service-related keywords (generic patterns)
+            # Look for common product indicators: brand names, model numbers, product categories
+            has_product_info = bool(
+                re.search(r'\b(model|product|service|item|device|version|edition)\b', section_lower) or
+                re.search(r'[A-Z][a-z]+\s+[A-Z0-9]+', section) or  # Pattern like "iPhone 15" or "Model X"
+                re.search(r'\d{4}', section)  # Year or model numbers
+            )
             
             if has_price:
                 high_priority.append(section)

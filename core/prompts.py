@@ -12,7 +12,7 @@ TOOLS AVAILABLE:
 - dispatch_email: Sends results. Required args: {{"content": "string"}}
 
 CRITICAL RULES:
-1. DATA PERSISTENCE: The 'content' arguments for save_to_notion and dispatch_email MUST NOT be empty. You must populate them with a placeholder instruction like "Synthesize all H100 pricing found into a report here."
+1. DATA PERSISTENCE: The 'content' arguments for save_to_notion and dispatch_email MUST NOT be empty. You must populate them with a placeholder instruction like "Synthesize all findings into a comprehensive report here."
 2. STRATEGY: Always follow a specific site scrape with a general web_search as a Plan B.
 3. CONTEXT: If the mission is about pricing, ensure the plan ends with archiving and emailing those specific numbers.
 4. PRICE SEARCH PERSISTENCE: For pricing missions, you MUST generate MULTIPLE search queries per product (minimum 3-5 variations). Never give up after just one search. Try different query variations:
@@ -31,39 +31,39 @@ JSON FORMAT EXAMPLE FOR PRICING MISSION:
   {{ 
     "step": 1, 
     "tool": "web_research", 
-    "args": {{"url": "https://lambdalabs.com/service/gpu-cloud"}}, 
-    "thought": "Directly checking the GPU cloud subpage for H100 pricing." 
+    "args": {{"url": "https://example.com/pricing"}}, 
+    "thought": "Directly checking the official pricing page for the product." 
   }},
   {{ 
     "step": 2, 
     "tool": "web_search", 
-    "args": {{"query": "NVIDIA H100 price 2025"}}, 
-    "thought": "First price search variation for H100." 
+    "args": {{"query": "{{product}} price 2025"}}, 
+    "thought": "First price search variation." 
   }},
   {{ 
     "step": 3, 
     "tool": "web_search", 
-    "args": {{"query": "NVIDIA H100 cost 2025"}}, 
+    "args": {{"query": "{{product}} cost 2025"}}, 
     "thought": "Second price search variation using 'cost' keyword." 
   }},
   {{ 
     "step": 4, 
     "tool": "web_search", 
-    "args": {{"query": "NVIDIA H100 buy retail price"}}, 
+    "args": {{"query": "{{product}} buy retail price"}}, 
     "thought": "Third price search variation for retail pricing." 
   }},
   {{ 
     "step": 5, 
     "tool": "web_search", 
-    "args": {{"query": "NVIDIA H100 MSRP official price"}}, 
+    "args": {{"query": "{{product}} MSRP official price"}}, 
     "thought": "Fourth price search variation for official MSRP." 
   }},
   {{ 
     "step": 6, 
     "tool": "save_to_notion", 
     "args": {{
-        "title": "Lambda Labs H100 Pricing 2026", 
-        "content": "Detailed breakdown of hourly H100 rates and availability found during research."
+        "title": "{{Product}} Pricing Report 2025", 
+        "content": "Detailed breakdown of pricing and availability found during research."
     }}, 
     "thought": "Saving the specific prices found in previous steps to the database." 
   }}
@@ -74,26 +74,28 @@ Mission: {user_input}
 
 # Report Synthesis Prompt - Optimized for Hard Data
 REPORT_SYNTHESIS_PROMPT = """
-You are a Senior Market Analyst. Analyze the DATA POOL and create a comprehensive, well-structured pricing report.
+You are a Senior Market Analyst. Analyze the DATA POOL and create a comprehensive, well-structured market intelligence report.
 
 DATA PROCESSING RULES:
-1. DEDUPLICATION: Normalize product names:
-   - "NVIDIA H100", "H100", "H100 GPU", "NVIDIA H100 AI" → "NVIDIA H100"
-   - "AMD MI300X", "MI300X", "AMD MI300" → "AMD MI300X"
-   - Group similar products together
+1. DEDUPLICATION: Normalize product/service names by grouping similar variations together:
+   - Identify common abbreviations, brand names, and alternative spellings
+   - Group products with the same core name but different suffixes/prefixes
+   - Example: "iPhone 15", "iPhone 15 Pro", "Apple iPhone 15" → "iPhone 15 Series"
 
-2. CATEGORIZATION: Categorize each price by type:
-   - "Hourly Cloud Rate" - for hourly cloud pricing (e.g., "$4.75/hr")
-   - "Retail Hardware" - for one-time purchase prices (e.g., "$30,000")
+2. CATEGORIZATION: Categorize each price by type based on context:
+   - "Hourly/Subscription Rate" - for recurring pricing (e.g., "$4.75/hr", "$99/month")
+   - "One-Time Purchase" - for single purchase prices (e.g., "$999")
    - "MSRP/Official" - manufacturer suggested retail price
    - "Bulk/Enterprise" - volume pricing or enterprise rates
+   - "Marketplace/Reseller" - third-party seller pricing
+   - "Promotional/Sale" - discounted or special pricing
 
 3. FILTERING: Remove or flag:
-   - Obvious outliers (e.g., $20 for enterprise GPU is likely a mistake)
+   - Obvious outliers (prices that are clearly unrealistic based on product category)
    - Malformed entries (incomplete data, non-English text, unclear context)
    - Duplicate entries with identical product, price type, and price
 
-4. DATA VALIDATION: If a price seems unrealistic, check context. Hourly cloud rates should be $1-$20/hr range for GPUs. Retail hardware prices for H100-class GPUs should be $25,000-$50,000.
+4. DATA VALIDATION: If a price seems unrealistic, check context. Consider the product category, market segment, and pricing model. Use common sense - if a luxury item is priced like a commodity, flag it for review.
 
 OUTPUT FORMAT:
 # 📊 Market Intelligence Report
@@ -108,16 +110,16 @@ If multiple sources have the same price, combine them in Source column.
 If prices differ significantly, list the range or most common price with note.
 
 Examples:
-- NVIDIA H100 | Hourly Cloud Rate | $4.75/hr | Lambda Labs | On-demand
-- NVIDIA H100 | Retail Hardware | $30,000-$40,000 | Various retailers | Price range
-- AMD MI300X | Retail Hardware | $10,000-$15,000 | AMD official, retailers | Entry-level pricing
+- Product A | One-Time Purchase | $999-$1,199 | Various retailers | Price range
+- Product B | Monthly Subscription | $29.99/month | Official website | Standard plan
+- Product C | MSRP/Official | $2,500 | Manufacturer | Base model
 
 ## 📈 Price Comparison & Analysis
 
 After the table, provide:
 - **Price Ranges**: For each product, show the price range by type
-- **Best Values**: Highlight the lowest cost options (e.g., "Best hourly rate: Lambda Labs at $4.75/hr")
-- **Market Insights**: Note any significant findings (e.g., "Cloud rates significantly lower than retail hardware costs")
+- **Best Values**: Highlight the lowest cost options and best deals
+- **Market Insights**: Note any significant findings, trends, or anomalies
 
 DATA POOL:
 {intel_pool}
