@@ -71,3 +71,49 @@ def validate_url(url: str, allow_localhost: bool = False) -> Tuple[bool, Optiona
         return False, "URL exceeds maximum length of 2048 characters"
     
     return True, None
+
+
+def validate_mission_input(user_input: str) -> Tuple[bool, Optional[str]]:
+    """
+    Validates mission input for security and basic sanity checks.
+    
+    Args:
+        user_input: The user input string to validate
+    
+    Returns:
+        Tuple of (is_valid: bool, error_message: Optional[str])
+    """
+    if not user_input or not isinstance(user_input, str):
+        return False, "Input must be a non-empty string"
+    
+    user_input = user_input.strip()
+    
+    if not user_input:
+        return False, "Input cannot be empty"
+    
+    if len(user_input) > 1000:
+        return False, "Input exceeds maximum length of 1000 characters"
+    
+    if len(user_input) < 3:
+        return False, "Input must be at least 3 characters"
+    
+    # Basic pattern detection for obvious injection attempts
+    dangerous_patterns = [
+        "<script",
+        "javascript:",
+        "onerror=",
+        "onload=",
+        "SELECT *",
+        "DROP TABLE",
+        "UNION SELECT",
+        "INSERT INTO",
+        "DELETE FROM",
+        "UPDATE SET",
+    ]
+    
+    user_input_lower = user_input.lower()
+    for pattern in dangerous_patterns:
+        if pattern in user_input_lower:
+            return False, f"Input contains potentially dangerous pattern: {pattern}"
+    
+    return True, None

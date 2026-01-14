@@ -1,4 +1,4 @@
-# 🤖 Market Intelligence Agent (MIA) v1.3
+# 🤖 Market Intelligence Agent (MIA) v1.5.1
 
 > **Autonomous Market Auditing & Technical Reconnaissance Engine.**
 
@@ -9,7 +9,7 @@
 ---
 
 ## ⚡ Overview
-**MIA v1.3** is an industrial-strength autonomous agent built with **FastAPI** with a modern Next.js frontend. It leverages a **ReAct (Reasoning + Acting)** loop to navigate the web, bypass anti-scraping measures, and synthesize high-fidelity reports. Unlike standard bots, MIA understands technical context—specifically optimized for **GPU Infrastructure Audits** (NVIDIA Blackwell/H100/B200).
+**MIA v1.5.1** is an industrial-strength autonomous agent built with **FastAPI** with a modern Next.js frontend. It leverages a **ReAct (Reasoning + Acting)** loop to navigate the web, bypass anti-scraping measures, and synthesize high-fidelity reports. Unlike standard bots, MIA understands technical context—specifically optimized for **GPU Infrastructure Audits** (NVIDIA Blackwell/H100/B200).
 
 
 

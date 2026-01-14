@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Header, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -9,10 +9,54 @@ import asyncio
 from database import get_db
 from services.agent_service import AgentService
 from core.logger import get_logger
+from core.settings import settings
+from core.validators import validate_mission_input
+from core.rate_limiter import check_rate_limit
 from models import MissionLog
 from sqlalchemy import desc
 
 logger = get_logger("AgentRouter")
+
+
+def get_client_ip(request: Request) -> str:
+    """Extract client IP address from request."""
+    # Check for forwarded IP (common in production behind proxies)
+    forwarded_for = request.headers.get("X-Forwarded-For")
+    if forwarded_for:
+        # Take the first IP in the chain
+        return forwarded_for.split(",")[0].strip()
+    
+    # Check for real IP header
+    real_ip = request.headers.get("X-Real-IP")
+    if real_ip:
+        return real_ip.strip()
+    
+    # Fallback to direct client IP
+    if request.client:
+        return request.client.host
+    
+    return "unknown"
+
+
+async def verify_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-Key")):
+    """
+    Verify API key for protected endpoints.
+    Returns None if API key is not configured (backward compatible).
+    Raises HTTPException if API key is invalid or missing when required.
+    """
+    # If API key is not configured, skip authentication (backward compatible)
+    if not settings.API_KEY:
+        return None
+    
+    # If API key is configured, require it
+    if not x_api_key or x_api_key != settings.API_KEY:
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid or missing API key"
+        )
+    
+    return x_api_key
+
 
 class MissionRequest(BaseModel):
     """
@@ -42,11 +86,43 @@ async def analyze_mission(data: MissionRequest):
         )
 
 @router.post("/execute")
-async def execute_mission(data: MissionRequest, db: Session = Depends(get_db)):
+async def execute_mission(
+    data: MissionRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    api_key: Optional[str] = Depends(verify_api_key)
+):
     """
     Step 2: Full Execution
     Triggers the ReAct loop: Planning -> Web Research -> Synthesis -> Action.
     """
+    # Get client IP for rate limiting and logging
+    client_ip = get_client_ip(request)
+    
+    # Input validation
+    is_valid, error_msg = validate_mission_input(data.user_input)
+    if not is_valid:
+        logger.warning(f"Invalid input from {client_ip}: {error_msg}")
+        raise HTTPException(status_code=400, detail=error_msg)
+    
+    # Rate limiting
+    is_allowed, remaining = check_rate_limit(client_ip, max_requests=10, window_minutes=60)
+    if not is_allowed:
+        logger.warning(f"Rate limit exceeded for IP {client_ip}")
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Maximum 10 requests per hour."
+        )
+    
+    # Request logging
+    api_key_status = "valid" if api_key else ("missing" if settings.API_KEY else "not_required")
+    logger.info(
+        f"Mission execution request - IP: {client_ip}, "
+        f"API Key: {api_key_status}, "
+        f"Input length: {len(data.user_input)}, "
+        f"Rate limit remaining: {remaining}"
+    )
+    
     try:
         agent = AgentService(db)
         result = await agent.process_mission(data.user_input, data.conversation_id)
@@ -59,11 +135,43 @@ async def execute_mission(data: MissionRequest, db: Session = Depends(get_db)):
         )
 
 @router.post("/execute/stream")
-async def execute_mission_stream(data: MissionRequest, db: Session = Depends(get_db)):
+async def execute_mission_stream(
+    data: MissionRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    api_key: Optional[str] = Depends(verify_api_key)
+):
     """
     Streaming version of mission execution.
     Streams ReAct loop steps as JSON lines (NDJSON format) with enhanced progress tracking.
     """
+    # Get client IP for rate limiting and logging
+    client_ip = get_client_ip(request)
+    
+    # Input validation
+    is_valid, error_msg = validate_mission_input(data.user_input)
+    if not is_valid:
+        logger.warning(f"Invalid input from {client_ip}: {error_msg}")
+        raise HTTPException(status_code=400, detail=error_msg)
+    
+    # Rate limiting
+    is_allowed, remaining = check_rate_limit(client_ip, max_requests=10, window_minutes=60)
+    if not is_allowed:
+        logger.warning(f"Rate limit exceeded for IP {client_ip}")
+        raise HTTPException(
+            status_code=429,
+            detail="Rate limit exceeded. Maximum 10 requests per hour."
+        )
+    
+    # Request logging
+    api_key_status = "valid" if api_key else ("missing" if settings.API_KEY else "not_required")
+    logger.info(
+        f"Streaming mission execution request - IP: {client_ip}, "
+        f"API Key: {api_key_status}, "
+        f"Input length: {len(data.user_input)}, "
+        f"Rate limit remaining: {remaining}"
+    )
+    
     async def generate_stream():
         try:
             agent = AgentService(db)

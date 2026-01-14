@@ -9,7 +9,7 @@ class Settings(BaseSettings):
 
     # --- PROJECT METADATA ---
     PROJECT_NAME: str = "Market Intelligence Agent"
-    VERSION: str = "1.3.0"
+    VERSION: str = "1.5.1"
 
     # --- DATABASE ---
     DATABASE_URL: str = Field(
@@ -47,6 +47,13 @@ class Settings(BaseSettings):
 
     # --- SYSTEM SETTINGS ---
     ANONYMIZED_TELEMETRY: bool = False
+    
+    # --- SECURITY SETTINGS ---
+    API_KEY: str = Field(
+        default="",
+        validation_alias="API_KEY",
+        description="API key for authentication (optional, defaults to empty string for backward compatibility)"
+    )
 
     # --- CHROMA DB SETTINGS ---
     # Explicitly disable ChromaDB telemetry to prevent 'capture() takes 1 positional argument' errors

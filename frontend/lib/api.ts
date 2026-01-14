@@ -24,6 +24,28 @@ const isDevelopment = () => {
   return process.env.NODE_ENV === "development";
 };
 
+const getApiKey = (): string | undefined => {
+  // Get API key from environment variable
+  const apiKey = process.env.NEXT_PUBLIC_API_KEY;
+  return apiKey && apiKey.trim() ? apiKey.trim() : undefined;
+};
+
+const getHeaders = (includeApiKey: boolean = false): Record<string, string> => {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+  };
+  
+  // Add API key header if configured and requested
+  if (includeApiKey) {
+    const apiKey = getApiKey();
+    if (apiKey) {
+      headers["X-API-Key"] = apiKey;
+    }
+  }
+  
+  return headers;
+};
+
 // Create a fetch with timeout
 const fetchWithTimeout = async (
   url: string,
@@ -102,9 +124,7 @@ export const api = {
     try {
       const response = await fetchWithTimeout(url, {
         method: "GET",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: getHeaders(false), // GET requests don't need API key
       });
 
       if (!response.ok) {
@@ -151,13 +171,14 @@ export const api = {
       // Increase timeout for mission execution (can take longer)
       const timeout = endpoint.includes("/execute") ? 120000 : API_TIMEOUT; // 2 minutes for execute
       
+      // Include API key for /execute endpoints
+      const includeApiKey = endpoint.includes("/execute");
+      
       const response = await fetchWithTimeout(
         url,
         {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: getHeaders(includeApiKey),
           body: JSON.stringify(data),
         },
         timeout
@@ -226,12 +247,13 @@ export const api = {
 
     // Start the stream
     (async () => {
+      // Include API key for /execute endpoints
+      const includeApiKey = endpoint.includes("/execute");
+      
       try {
         const response = await fetch(url, {
           method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
+          headers: getHeaders(includeApiKey),
           body: JSON.stringify(data),
           signal: controller.signal,
         });
