@@ -25,8 +25,12 @@ export default function AgentPage() {
     executeMissionStream,
     cancelStream,
     isStreaming,
+    currentStep,
+    totalSteps,
+    progressPercentage,
     currentThinking,
     toolExecutions,
+    actions,
     finalReport,
     error: executionError,
   } = useMissionExecutionStream();
@@ -98,7 +102,7 @@ export default function AgentPage() {
         }, 1000);
       }
     }
-  }, [isStreaming, currentThinking, toolExecutions, finalReport, streamingMessageId, refetchReports]);
+  }, [isStreaming, currentStep, totalSteps, progressPercentage, currentThinking, toolExecutions, actions, finalReport, streamingMessageId, refetchReports]);
 
   const handleSend = async () => {
     if (!input.trim() || isStreaming) return;
@@ -162,31 +166,133 @@ export default function AgentPage() {
             Interact with your Market Intelligence Agent
           </p>
           {executionError && (
-            <div className="mt-4 bg-red-500/20 border border-red-500/50 rounded-lg p-3">
-              <p className="text-sm text-red-500">
-                Execution Error: {executionError.message}
-              </p>
+            <div className="mt-4 bg-red-500/20 border border-red-500/50 rounded-lg p-4">
+              <div className="flex items-start space-x-2">
+                <div className="text-red-500 mt-0.5">⚠️</div>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-red-500 mb-1">Execution Error</p>
+                  <p className="text-sm text-red-400">{executionError.message}</p>
+                  <button
+                    onClick={() => window.location.reload()}
+                    className="mt-2 text-xs text-red-300 hover:text-red-100 underline"
+                  >
+                    Reload page to retry
+                  </button>
+                </div>
+              </div>
             </div>
           )}
-          {isStreaming && toolExecutions.length > 0 && (
-            <div className="mt-4 bg-blue-500/10 border border-blue-500/50 rounded-lg p-3">
-              <p className="text-sm font-semibold text-blue-500 mb-2">Active Tools:</p>
-              <div className="space-y-1">
-                {toolExecutions.map((tool, idx) => (
-                  <div key={idx} className="flex items-center space-x-2 text-sm">
-                    {tool.status === "completed" ? (
-                      <CheckCircle2 className="h-4 w-4 text-green-500" />
-                    ) : (
-                      <Loader2 className="h-4 w-4 text-blue-500 animate-spin" />
-                    )}
-                    <span className="text-muted-foreground">
-                      {tool.tool === "web_search" ? "Web Search" : 
-                       tool.tool === "web_research" ? "Web Research" : 
-                       tool.tool}
-                    </span>
+          {isStreaming && (
+            <div className="mt-4 space-y-3">
+              {/* Progress Bar */}
+              {totalSteps > 0 && (
+                <div className="bg-blue-500/10 border border-blue-500/50 rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-sm font-semibold text-blue-500">
+                      Step {currentStep} of {totalSteps}
+                    </p>
+                    <p className="text-sm text-blue-400">{progressPercentage}%</p>
                   </div>
-                ))}
-              </div>
+                  <div className="w-full bg-blue-500/20 rounded-full h-2">
+                    <div
+                      className="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                      style={{ width: `${progressPercentage}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              
+              {/* Tool Executions */}
+              {toolExecutions.length > 0 && (
+                <div className="bg-blue-500/10 border border-blue-500/50 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-blue-500 mb-3">Tools Executing:</p>
+                  <div className="space-y-2">
+                    {toolExecutions.map((tool, idx) => (
+                      <div key={idx} className="bg-background/50 rounded-md p-3 border border-border">
+                        <div className="flex items-center space-x-2 mb-1">
+                          {tool.status === "completed" ? (
+                            <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+                          ) : tool.status === "failed" ? (
+                            <Circle className="h-4 w-4 text-red-500 fill-red-500 flex-shrink-0" />
+                          ) : (
+                            <Loader2 className="h-4 w-4 text-blue-500 animate-spin flex-shrink-0" />
+                          )}
+                          <span className="text-sm font-medium text-foreground">
+                            {tool.tool === "web_search" ? "Web Search" : 
+                             tool.tool === "web_research" ? "Web Research" : 
+                             tool.tool}
+                          </span>
+                          <span className={`text-xs px-2 py-0.5 rounded ${
+                            tool.status === "completed" ? "bg-green-500/20 text-green-500" :
+                            tool.status === "failed" ? "bg-red-500/20 text-red-500" :
+                            "bg-blue-500/20 text-blue-500"
+                          }`}>
+                            {tool.status}
+                          </span>
+                        </div>
+                        {tool.args && (
+                          <div className="ml-6 mt-1">
+                            {tool.args.query && (
+                              <p className="text-xs text-muted-foreground">
+                                Query: <span className="font-mono">{tool.args.query}</span>
+                              </p>
+                            )}
+                            {tool.args.url && (
+                              <p className="text-xs text-muted-foreground">
+                                URL: <span className="font-mono text-blue-400">{tool.args.url}</span>
+                              </p>
+                            )}
+                          </div>
+                        )}
+                        {tool.summary && (
+                          <p className="ml-6 mt-1 text-xs text-muted-foreground italic">
+                            {tool.summary}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              
+              {/* Actions */}
+              {actions.length > 0 && (
+                <div className="bg-purple-500/10 border border-purple-500/50 rounded-lg p-4">
+                  <p className="text-sm font-semibold text-purple-500 mb-3">Actions:</p>
+                  <div className="space-y-2">
+                    {actions.map((action, idx) => (
+                      <div key={idx} className="bg-background/50 rounded-md p-3 border border-border">
+                        <div className="flex items-center space-x-2">
+                          {action.status === "completed" ? (
+                            <CheckCircle2 className="h-4 w-4 text-green-500 flex-shrink-0" />
+                          ) : action.status === "failed" ? (
+                            <Circle className="h-4 w-4 text-red-500 fill-red-500 flex-shrink-0" />
+                          ) : (
+                            <Loader2 className="h-4 w-4 text-purple-500 animate-spin flex-shrink-0" />
+                          )}
+                          <span className="text-sm font-medium text-foreground">
+                            {action.action === "save_to_notion" ? "Save to Notion" :
+                             action.action === "dispatch_email" ? "Send Email" :
+                             action.action}
+                          </span>
+                          <span className={`text-xs px-2 py-0.5 rounded ${
+                            action.status === "completed" ? "bg-green-500/20 text-green-500" :
+                            action.status === "failed" ? "bg-red-500/20 text-red-500" :
+                            "bg-purple-500/20 text-purple-500"
+                          }`}>
+                            {action.status}
+                          </span>
+                        </div>
+                        {action.result && (
+                          <p className="ml-6 mt-1 text-xs text-muted-foreground">
+                            {action.result}
+                          </p>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
           )}
         </div>

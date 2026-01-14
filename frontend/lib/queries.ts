@@ -31,14 +31,33 @@ export interface MissionExecutionResponse {
 export type StreamMessage = 
   | { type: "thinking"; content: string }
   | { type: "tool"; tool: string; result: string }
+  | { type: "progress"; step: number; total: number; percentage: number }
+  | { type: "tool_start"; tool: string; args?: any }
+  | { type: "tool_complete"; tool: string; summary: string; error?: boolean }
+  | { type: "action_start"; action: string; title: string }
+  | { type: "action_complete"; action: string; result: string; error?: boolean }
   | { type: "complete"; report: string }
-  | { type: "error"; error: string };
+  | { type: "error"; error: string; context?: string };
 
 // Streaming state type
 export interface StreamingState {
   isStreaming: boolean;
+  currentStep: number;
+  totalSteps: number;
+  progressPercentage: number;
   currentThinking: string;
-  toolExecutions: Array<{ tool: string; status: string; result?: string }>;
+  toolExecutions: Array<{
+    tool: string;
+    status: "executing" | "completed" | "failed";
+    args?: any;
+    result?: string;
+    summary?: string;
+  }>;
+  actions: Array<{
+    action: string;
+    status: "executing" | "completed" | "failed";
+    result?: string;
+  }>;
   partialReport: string;
   finalReport: string | null;
   error: Error | null;
@@ -86,8 +105,22 @@ export function useMissionExecution() {
 // Mission execution hook for Phase 6 (streaming)
 export function useMissionExecutionStream() {
   const [isStreaming, setIsStreaming] = useState(false);
+  const [currentStep, setCurrentStep] = useState(0);
+  const [totalSteps, setTotalSteps] = useState(10);
+  const [progressPercentage, setProgressPercentage] = useState(0);
   const [currentThinking, setCurrentThinking] = useState("");
-  const [toolExecutions, setToolExecutions] = useState<Array<{ tool: string; status: string; result?: string }>>([]);
+  const [toolExecutions, setToolExecutions] = useState<Array<{
+    tool: string;
+    status: "executing" | "completed" | "failed";
+    args?: any;
+    result?: string;
+    summary?: string;
+  }>>([]);
+  const [actions, setActions] = useState<Array<{
+    action: string;
+    status: "executing" | "completed" | "failed";
+    result?: string;
+  }>>([]);
   const [partialReport, setPartialReport] = useState("");
   const [finalReport, setFinalReport] = useState<string | null>(null);
   const [error, setError] = useState<Error | null>(null);
@@ -100,20 +133,29 @@ export function useMissionExecutionStream() {
     return new Promise((resolve, reject) => {
       // Reset state
       setIsStreaming(true);
+      setCurrentStep(0);
+      setTotalSteps(10);
+      setProgressPercentage(0);
       setCurrentThinking("");
       setToolExecutions([]);
+      setActions([]);
       setPartialReport("");
       setFinalReport(null);
       setError(null);
 
       if (useMockApi()) {
         // Mock streaming for testing
-        const mockSteps = [
-          { type: "thinking", content: "Analyzing mission..." },
+        const mockSteps: StreamMessage[] = [
+          { type: "thinking", content: "Analyzing mission intent..." },
+          { type: "progress", step: 1, total: 6, percentage: 16 },
+          { type: "thinking", content: "Generating execution plan..." },
+          { type: "progress", step: 2, total: 6, percentage: 33 },
           { type: "thinking", content: "Plan generated with 3 steps" },
-          { type: "tool", tool: "web_search", result: "Executing web_search..." },
-          { type: "tool", tool: "web_search", result: "Completed: Found results..." },
+          { type: "tool_start", tool: "web_search", args: { query: "example query" } },
+          { type: "progress", step: 3, total: 6, percentage: 50 },
+          { type: "tool_complete", tool: "web_search", summary: "Found results..." },
           { type: "thinking", content: "Synthesizing final report..." },
+          { type: "progress", step: 5, total: 6, percentage: 83 },
           { type: "complete", report: `Mock mission execution result for: "${request.user_input}"\n\nThis is a mock response. Set NEXT_PUBLIC_USE_MOCK_API=false to use real backend.` },
         ];
 
@@ -181,7 +223,122 @@ export function useMissionExecutionStream() {
         setCurrentThinking(message.content);
         break;
       
+      case "progress":
+        setCurrentStep(message.step);
+        setTotalSteps(message.total);
+        setProgressPercentage(message.percentage);
+        break;
+      
+      case "tool_start":
+        setToolExecutions((prev) => {
+          // Check if tool already exists
+          const existing = prev.findIndex((t) => t.tool === message.tool && t.status === "executing");
+          
+          if (existing >= 0) {
+            // Update existing execution
+            const updated = [...prev];
+            updated[existing] = {
+              tool: message.tool,
+              status: "executing",
+              args: message.args,
+            };
+            return updated;
+          } else {
+            // Add new execution
+            return [
+              ...prev,
+              {
+                tool: message.tool,
+                status: "executing",
+                args: message.args,
+              },
+            ];
+          }
+        });
+        break;
+      
+      case "tool_complete":
+        setToolExecutions((prev) => {
+          const existing = prev.findIndex((t) => t.tool === message.tool);
+          
+          if (existing >= 0) {
+            // Update existing execution
+            const updated = [...prev];
+            updated[existing] = {
+              ...updated[existing],
+              status: message.error ? "failed" : "completed",
+              summary: message.summary,
+            };
+            return updated;
+          } else {
+            // Add new execution (shouldn't happen, but handle it)
+            return [
+              ...prev,
+              {
+                tool: message.tool,
+                status: message.error ? "failed" : "completed",
+                summary: message.summary,
+              },
+            ];
+          }
+        });
+        break;
+      
+      case "action_start":
+        setActions((prev) => {
+          // Check if action already exists
+          const existing = prev.findIndex((a) => a.action === message.action && a.status === "executing");
+          
+          if (existing >= 0) {
+            // Update existing action
+            const updated = [...prev];
+            updated[existing] = {
+              action: message.action,
+              status: "executing",
+            };
+            return updated;
+          } else {
+            // Add new action
+            return [
+              ...prev,
+              {
+                action: message.action,
+                status: "executing",
+              },
+            ];
+          }
+        });
+        break;
+      
+      case "action_complete":
+        setActions((prev) => {
+          const existing = prev.findIndex((a) => a.action === message.action);
+          
+          if (existing >= 0) {
+            // Update existing action
+            const updated = [...prev];
+            updated[existing] = {
+              action: message.action,
+              status: message.error ? "failed" : "completed",
+              result: message.result,
+            };
+            return updated;
+          } else {
+            // Add new action (shouldn't happen, but handle it)
+            return [
+              ...prev,
+              {
+                action: message.action,
+                status: message.error ? "failed" : "completed",
+                result: message.result,
+              },
+            ];
+          }
+        });
+        break;
+      
       case "tool":
+        // Legacy tool message type (for backward compatibility)
         setToolExecutions((prev) => {
           const existing = prev.findIndex((t) => t.tool === message.tool && t.status === "executing");
           
@@ -213,7 +370,7 @@ export function useMissionExecutionStream() {
         break;
       
       case "error":
-        setError(new Error(message.error));
+        setError(new Error(message.error + (message.context ? ` (${message.context})` : "")));
         break;
     }
     
@@ -233,8 +390,12 @@ export function useMissionExecutionStream() {
     executeMissionStream,
     cancelStream,
     isStreaming,
+    currentStep,
+    totalSteps,
+    progressPercentage,
     currentThinking,
     toolExecutions,
+    actions,
     partialReport,
     finalReport,
     error,

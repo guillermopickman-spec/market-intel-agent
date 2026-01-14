@@ -62,38 +62,132 @@ async def execute_mission(data: MissionRequest, db: Session = Depends(get_db)):
 async def execute_mission_stream(data: MissionRequest, db: Session = Depends(get_db)):
     """
     Streaming version of mission execution.
-    Streams ReAct loop steps as JSON lines (NDJSON format).
+    Streams ReAct loop steps as JSON lines (NDJSON format) with enhanced progress tracking.
     """
     async def generate_stream():
         try:
             agent = AgentService(db)
             mission_id = data.conversation_id or 999
             
-            # Send thinking step
-            yield json.dumps({"type": "thinking", "content": f"Analyzing mission: {data.user_input[:50]}..."}) + "\n"
+            # Calculate total steps for progress tracking
+            # Step 1: Analyze mission
+            # Step 2: Generate plan
+            # Steps 3-N: Research tools
+            # Step N+1: Process intelligence
+            # Step N+2: Synthesize report
+            # Steps N+3+: Action steps
             
-            # Generate plan
+            # Step 1: Analyzing mission intent
+            yield json.dumps({
+                "type": "thinking",
+                "content": "Analyzing mission intent..."
+            }) + "\n"
+            
+            yield json.dumps({
+                "type": "progress",
+                "step": 1,
+                "total": 10,  # Will be updated after plan generation
+                "percentage": 5
+            }) + "\n"
+            
+            # Step 2: Generate execution plan
+            yield json.dumps({
+                "type": "thinking",
+                "content": "Generating execution plan..."
+            }) + "\n"
+            
             plan = await agent.generate_plan(data.user_input)
             agent.current_intel = ""
             logs = []
             
-            yield json.dumps({"type": "thinking", "content": f"Plan generated with {len(plan)} steps"}) + "\n"
+            # Calculate actual total steps
+            research_steps = [s for s in plan if s.get('tool') in ["web_research", "web_search"]]
+            action_steps = [s for s in plan if s.get('tool') in ["save_to_notion", "dispatch_email"]]
+            total_steps = 2 + len(research_steps) + 2 + len(action_steps)  # analyze + plan + research + process + synthesize + actions
             
-            # Execute research steps
-            for step in [s for s in plan if s.get('tool') in ["web_research", "web_search"]]:
+            yield json.dumps({
+                "type": "thinking",
+                "content": f"Plan generated with {len(plan)} steps"
+            }) + "\n"
+            
+            yield json.dumps({
+                "type": "progress",
+                "step": 2,
+                "total": total_steps,
+                "percentage": int((2 / total_steps) * 100)
+            }) + "\n"
+            
+            # Step 3+: Execute research steps
+            current_step = 3
+            for idx, step in enumerate(research_steps, 1):
                 tool_name = step.get('tool', 'unknown')
-                yield json.dumps({"type": "tool", "tool": tool_name, "result": f"Executing {tool_name}..."}) + "\n"
+                tool_args = step.get('args', {})
                 
-                res = await agent.execute_tool(step['tool'], step['args'], mission_id)
+                # Extract query/URL for display
+                display_args = {}
+                if 'query' in tool_args:
+                    display_args['query'] = tool_args['query'][:100]  # Limit length
+                elif 'url' in tool_args:
+                    display_args['url'] = tool_args['url']
                 
-                # Limit each search result
-                if len(res) > 2000:
-                    res = res[:2000] + "... [truncated]"
+                # Send tool start event
+                yield json.dumps({
+                    "type": "tool_start",
+                    "tool": tool_name,
+                    "args": display_args
+                }) + "\n"
                 
-                agent.current_intel += f"\n---\n{res}\n"
-                logs.append({"tool": step['tool'], "status": "Gathered"})
+                yield json.dumps({
+                    "type": "progress",
+                    "step": current_step,
+                    "total": total_steps,
+                    "percentage": int((current_step / total_steps) * 100)
+                }) + "\n"
                 
-                yield json.dumps({"type": "tool", "tool": tool_name, "result": f"Completed: {res[:100]}..."}) + "\n"
+                try:
+                    res = await agent.execute_tool(step['tool'], step['args'], mission_id)
+                    
+                    # Limit each search result
+                    if len(res) > 2000:
+                        res = res[:2000] + "... [truncated]"
+                    
+                    agent.current_intel += f"\n---\n{res}\n"
+                    logs.append({"tool": step['tool'], "status": "Gathered"})
+                    
+                    # Create summary for streaming (avoid payload bloat)
+                    summary = res[:150] + "..." if len(res) > 150 else res
+                    
+                    # Send tool complete event
+                    yield json.dumps({
+                        "type": "tool_complete",
+                        "tool": tool_name,
+                        "summary": summary
+                    }) + "\n"
+                    
+                except Exception as tool_error:
+                    logger.error(f"Tool execution error ({tool_name}): {tool_error}", exc_info=True)
+                    yield json.dumps({
+                        "type": "tool_complete",
+                        "tool": tool_name,
+                        "summary": f"Error: {str(tool_error)[:100]}",
+                        "error": True
+                    }) + "\n"
+                    # Continue with next tool even if one fails
+                
+                current_step += 1
+            
+            # Step: Processing gathered intelligence
+            yield json.dumps({
+                "type": "thinking",
+                "content": "Processing gathered intelligence..."
+            }) + "\n"
+            
+            yield json.dumps({
+                "type": "progress",
+                "step": current_step,
+                "total": total_steps,
+                "percentage": int((current_step / total_steps) * 100)
+            }) + "\n"
             
             # Truncate intel pool
             max_allowed_chars = agent._calculate_max_intel_pool_size()
@@ -106,7 +200,20 @@ async def execute_mission_stream(data: MissionRequest, db: Session = Depends(get
             else:
                 truncated_intel = agent._truncate_intel_pool(agent.current_intel, max_chars=max_allowed_chars)
             
-            yield json.dumps({"type": "thinking", "content": "Synthesizing final report..."}) + "\n"
+            current_step += 1
+            
+            # Step: Synthesizing final report
+            yield json.dumps({
+                "type": "thinking",
+                "content": "Synthesizing final report..."
+            }) + "\n"
+            
+            yield json.dumps({
+                "type": "progress",
+                "step": current_step,
+                "total": total_steps,
+                "percentage": int((current_step / total_steps) * 100)
+            }) + "\n"
             
             # Generate final report
             from core.prompts import REPORT_SYNTHESIS_PROMPT
@@ -121,13 +228,67 @@ async def execute_mission_stream(data: MissionRequest, db: Session = Depends(get
             
             agent._persist_to_memory(agent.current_intel, mission_id)
             
-            # Execute action steps
-            for step in [s for s in plan if s.get('tool') in ["save_to_notion", "dispatch_email"]]:
-                step['args']['content'] = agent.current_intel
-                res = await agent.execute_tool(step['tool'], step['args'], mission_id)
-                logs.append({"tool": step['tool'], "result": res})
+            current_step += 1
             
-            # Send completion
+            # Steps: Execute action steps (save_to_notion, dispatch_email)
+            for step in action_steps:
+                action_name = step.get('tool', 'unknown')
+                action_args = step.get('args', {})
+                
+                # Extract title for display
+                display_title = action_args.get('title', 'Untitled')
+                
+                # Send action start event
+                yield json.dumps({
+                    "type": "action_start",
+                    "action": action_name,
+                    "title": display_title[:100]  # Limit length
+                }) + "\n"
+                
+                yield json.dumps({
+                    "type": "progress",
+                    "step": current_step,
+                    "total": total_steps,
+                    "percentage": int((current_step / total_steps) * 100)
+                }) + "\n"
+                
+                try:
+                    step['args']['content'] = agent.current_intel
+                    res = await agent.execute_tool(step['tool'], step['args'], mission_id)
+                    logs.append({"tool": step['tool'], "result": res})
+                    
+                    # Send action complete event
+                    yield json.dumps({
+                        "type": "action_complete",
+                        "action": action_name,
+                        "result": res[:100]  # Limit result length
+                    }) + "\n"
+                    
+                except Exception as action_error:
+                    logger.error(f"Action execution error ({action_name}): {action_error}", exc_info=True)
+                    yield json.dumps({
+                        "type": "action_complete",
+                        "action": action_name,
+                        "result": f"Error: {str(action_error)[:100]}",
+                        "error": True
+                    }) + "\n"
+                    # Continue with next action even if one fails
+                
+                current_step += 1
+            
+            # Send final completion
+            yield json.dumps({
+                "type": "progress",
+                "step": total_steps,
+                "total": total_steps,
+                "percentage": 100
+            }) + "\n"
+            
+            yield json.dumps({
+                "type": "thinking",
+                "content": "Mission complete!"
+            }) + "\n"
+            
             yield json.dumps({
                 "type": "complete",
                 "report": agent.current_intel
@@ -137,7 +298,8 @@ async def execute_mission_stream(data: MissionRequest, db: Session = Depends(get
             logger.error(f"Streaming Execution Error: {e}", exc_info=True)
             yield json.dumps({
                 "type": "error",
-                "error": str(e)
+                "error": str(e),
+                "context": "Mission execution failed"
             }) + "\n"
     
     return StreamingResponse(
