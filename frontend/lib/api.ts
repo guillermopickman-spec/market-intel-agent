@@ -52,17 +52,38 @@ const fetchWithTimeout = async (
   options: RequestInit = {},
   timeout: number = API_TIMEOUT
 ): Promise<Response> => {
+  // #region debug log
+  const startTime = Date.now();
+  fetch('http://127.0.0.1:7243/ingest/9b049a5e-546a-4d09-9a9f-aeb8a9e76b6a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:50',message:'fetchWithTimeout start',data:{url,timeout,method:options.method||'GET'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+  // #endregion
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeout);
+  const timeoutId = setTimeout(() => {
+    // #region debug log
+    const elapsed = Date.now() - startTime;
+    fetch('http://127.0.0.1:7243/ingest/9b049a5e-546a-4d09-9a9f-aeb8a9e76b6a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:56',message:'Timeout triggered',data:{url,timeout,elapsed},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+    // #endregion
+    controller.abort();
+  }, timeout);
 
   try {
+    // #region debug log
+    fetch('http://127.0.0.1:7243/ingest/9b049a5e-546a-4d09-9a9f-aeb8a9e76b6a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:59',message:'Fetch request sent',data:{url},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'B'})}).catch(()=>{});
+    // #endregion
     const response = await fetch(url, {
       ...options,
       signal: controller.signal,
     });
+    // #region debug log
+    const elapsed = Date.now() - startTime;
+    fetch('http://127.0.0.1:7243/ingest/9b049a5e-546a-4d09-9a9f-aeb8a9e76b6a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:64',message:'Fetch response received',data:{url,elapsed,status:response.status,ok:response.ok},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+    // #endregion
     clearTimeout(timeoutId);
     return response;
   } catch (error) {
+    // #region debug log
+    const elapsed = Date.now() - startTime;
+    fetch('http://127.0.0.1:7243/ingest/9b049a5e-546a-4d09-9a9f-aeb8a9e76b6a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:70',message:'Fetch error caught',data:{url,elapsed,errorName:error instanceof Error?error.name:'unknown',errorMessage:error instanceof Error?error.message:'unknown'},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'D'})}).catch(()=>{});
+    // #endregion
     clearTimeout(timeoutId);
     if (error instanceof Error && error.name === "AbortError") {
       throw new Error(`Request timeout after ${timeout}ms`);
@@ -96,7 +117,10 @@ const handleApiError = (error: unknown, endpoint: string): Error => {
 };
 
 export const api = {
-  async get<T>(endpoint: string): Promise<T> {
+  async get<T>(endpoint: string, customTimeout?: number): Promise<T> {
+    // #region debug log
+    fetch('http://127.0.0.1:7243/ingest/9b049a5e-546a-4d09-9a9f-aeb8a9e76b6a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'api.ts:99',message:'api.get called',data:{endpoint,customTimeout,defaultTimeout:API_TIMEOUT},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'E'})}).catch(()=>{});
+    // #endregion
     if (useMockApi()) {
       // In mock mode, we'll handle this in queries.ts
       throw new Error("Mock API should be handled in queries.ts");
@@ -113,6 +137,7 @@ export const api = {
     // Ensure endpoint starts with / and API URL doesn't end with /
     const normalizedEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
     const url = `${apiUrl}${normalizedEndpoint}`;
+    const timeout = customTimeout || API_TIMEOUT;
 
     // Always log in production for debugging 404 errors
     console.log(`[API] GET ${url}`);
@@ -125,7 +150,7 @@ export const api = {
       const response = await fetchWithTimeout(url, {
         method: "GET",
         headers: getHeaders(false), // GET requests don't need API key
-      });
+      }, timeout);
 
       if (!response.ok) {
         const errorText = await response.text().catch(() => response.statusText);
@@ -341,5 +366,90 @@ export const api = {
       clearTimeout(timeoutId);
       controller.abort();
     };
+  },
+
+  async delete<T>(endpoint: string): Promise<T> {
+    if (useMockApi()) {
+      throw new Error("Mock API should be handled in queries.ts");
+    }
+
+    const apiUrl = getApiUrl();
+    if (!apiUrl) {
+      throw new Error("NEXT_PUBLIC_API_URL is not configured");
+    }
+
+    const normalizedEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+    const url = `${apiUrl}${normalizedEndpoint}`;
+
+    console.log(`[API] DELETE ${url}`);
+
+    try {
+      const response = await fetchWithTimeout(url, {
+        method: "DELETE",
+        headers: getHeaders(false),
+      }, API_TIMEOUT);
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => response.statusText);
+        const errorMessage = `API request failed: ${response.status} ${response.statusText}${errorText ? ` - ${errorText}` : ""}`;
+        console.error(`[API] DELETE ${url} failed:`, errorMessage);
+        throw new Error(errorMessage);
+      }
+
+      const result = await response.json();
+
+      if (isDevelopment()) {
+        console.log(`[API] DELETE ${url} - Success`, result);
+      }
+
+      return result as T;
+    } catch (error) {
+      const enhancedError = handleApiError(error, endpoint);
+      console.error(`[API] DELETE ${url} - Error`, enhancedError);
+      throw enhancedError;
+    }
+  },
+
+  async patch<T>(endpoint: string, data: unknown): Promise<T> {
+    if (useMockApi()) {
+      throw new Error("Mock API should be handled in queries.ts");
+    }
+
+    const apiUrl = getApiUrl();
+    if (!apiUrl) {
+      throw new Error("NEXT_PUBLIC_API_URL is not configured");
+    }
+
+    const normalizedEndpoint = endpoint.startsWith("/") ? endpoint : `/${endpoint}`;
+    const url = `${apiUrl}${normalizedEndpoint}`;
+
+    console.log(`[API] PATCH ${url}`, data);
+
+    try {
+      const response = await fetchWithTimeout(url, {
+        method: "PATCH",
+        headers: getHeaders(false),
+        body: JSON.stringify(data),
+      }, API_TIMEOUT);
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => response.statusText);
+        const errorMessage = `API request failed: ${response.status} ${response.statusText}${errorText ? ` - ${errorText}` : ""}`;
+        console.error(`[API] PATCH ${url} failed:`, errorMessage);
+        throw new Error(errorMessage);
+      }
+
+      const result = await response.json();
+
+      if (isDevelopment()) {
+        console.log(`[API] PATCH ${url} - Success`, result);
+      }
+
+      return result as T;
+    } catch (error) {
+      const enhancedError = handleApiError(error, endpoint);
+      console.error(`[API] PATCH ${url} - Error`, enhancedError);
+      throw enhancedError;
+    }
   },
 };

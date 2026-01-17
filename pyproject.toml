@@ -32,6 +32,7 @@ dependencies = [
 [tool.poetry]
 # No packages specified - this is an application, not a library package
 # Vercel will use pyproject.toml for Python dependencies via uv
+package-mode = false
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]

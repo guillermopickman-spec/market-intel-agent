@@ -76,7 +76,7 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title="Market Intelligence Agent",
     version="1.5.1",
-    lifespan=lifespan
+    lifespan=lifespan,
 )
 
 cors_origins = settings.get_cors_origins()

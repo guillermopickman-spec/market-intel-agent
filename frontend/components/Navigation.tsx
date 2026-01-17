@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { BarChart3, Bot, FileText, Home } from "lucide-react";
+import { BarChart3, Bot, FileText, Home, MessageSquare } from "lucide-react";
 
 export default function Navigation() {
   const pathname = usePathname();
@@ -10,6 +10,7 @@ export default function Navigation() {
   const navItems = [
     { href: "/", label: "Dashboard", icon: Home },
     { href: "/agent", label: "Agent", icon: Bot },
+    { href: "/chat", label: "Chat", icon: MessageSquare },
     { href: "/reports", label: "Reports", icon: FileText },
   ];
 

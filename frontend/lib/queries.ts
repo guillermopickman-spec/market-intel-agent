@@ -613,3 +613,259 @@ export function useActivity() {
 
   return { data, isLoading, error };
 }
+
+// Chat query types
+export interface ChatResponse {
+  query: string;
+  conversation_id: number | null;
+  title?: string | null;
+  mission_id?: number | null;
+  response: string;
+  sources: string[];
+  status: string;
+}
+
+// Conversation types
+export interface Conversation {
+  id: number;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+  message_count?: number;
+}
+
+export interface ConversationWithMessages extends Conversation {
+  messages: Array<{
+    id: number;
+    role: string;
+    content: string;
+    timestamp: string;
+  }>;
+}
+
+// Mission types
+export interface Mission {
+  id: number;
+  conversation_id: number;
+  query: string;
+  title: string;
+  status: string;
+  created_at: string;
+}
+
+// Chat query hook
+export function useChatQuery() {
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  const sendChatQuery = async (
+    query: string,
+    conversationId?: number,
+    missionId?: number
+  ): Promise<ChatResponse> => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      if (useMockApi()) {
+        // Mock response for testing
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        return {
+          query,
+          conversation_id: conversationId || null,
+          response: `Mock RAG response for: "${query}"\n\nThis is a mock response. Set NEXT_PUBLIC_USE_MOCK_API=false to use real backend.`,
+          sources: ["Mock Report 1", "Mock Report 2"],
+          status: "success",
+        };
+      } else {
+        // #region debug log
+        const queryStartTime = Date.now();
+        fetch('http://127.0.0.1:7243/ingest/9b049a5e-546a-4d09-9a9f-aeb8a9e76b6a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'queries.ts:650',message:'sendChatQuery start',data:{query,conversationId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'F'})}).catch(()=>{});
+        // #endregion
+
+        // Real API call to /chat/ask endpoint using POST (60 seconds timeout for RAG queries)
+        // #region debug log
+        fetch('http://127.0.0.1:7243/ingest/9b049a5e-546a-4d09-9a9f-aeb8a9e76b6a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'queries.ts:657',message:'Calling api.post for /chat/ask',data:{endpoint:'/chat/ask',conversationId,missionId},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'A'})}).catch(()=>{});
+        // #endregion
+        const response = await api.post<ChatResponse>("/chat/ask", {
+          query,
+          conversation_id: conversationId || null,
+          mission_id: missionId || null,
+        });
+        // #region debug log
+        const queryElapsed = Date.now() - queryStartTime;
+        fetch('http://127.0.0.1:7243/ingest/9b049a5e-546a-4d09-9a9f-aeb8a9e76b6a',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({location:'queries.ts:658',message:'sendChatQuery success',data:{query,elapsed:queryElapsed},timestamp:Date.now(),sessionId:'debug-session',runId:'run1',hypothesisId:'C'})}).catch(()=>{});
+        // #endregion
+        return response;
+      }
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error("Unknown error");
+      setError(error);
+      throw error;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return { sendChatQuery, isLoading, error };
+}
+
+// Conversation hooks
+export function useConversations() {
+  const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  const fetchConversations = async () => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      if (useMockApi()) {
+        // Mock conversations
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        setConversations([
+          {
+            id: 1,
+            title: "Mock Conversation 1",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            message_count: 5,
+          },
+          {
+            id: 2,
+            title: "Mock Conversation 2",
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            message_count: 3,
+          },
+        ]);
+      } else {
+        const data = await api.get<Conversation[]>("/chat/conversations");
+        setConversations(data);
+      }
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error("Unknown error");
+      setError(error);
+      console.error("Failed to fetch conversations:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchConversations();
+  }, []);
+
+  return { conversations, isLoading, error, refetch: fetchConversations };
+}
+
+export function useConversation(conversationId: number | undefined) {
+  const [conversation, setConversation] = useState<ConversationWithMessages | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  const fetchConversation = async () => {
+    if (!conversationId) {
+      setConversation(null);
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      if (useMockApi()) {
+        // Mock conversation with messages
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        setConversation({
+          id: conversationId,
+          title: "Mock Conversation",
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          messages: [
+            {
+              id: 1,
+              role: "user",
+              content: "What missions have been completed?",
+              timestamp: new Date().toISOString(),
+            },
+            {
+              id: 2,
+              role: "assistant",
+              content: "Mock response about missions.",
+              timestamp: new Date().toISOString(),
+            },
+          ],
+        });
+      } else {
+        const data = await api.get<ConversationWithMessages>(`/chat/conversations/${conversationId}`);
+        setConversation(data);
+      }
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error("Unknown error");
+      setError(error);
+      console.error("Failed to fetch conversation:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchConversation();
+  }, [conversationId]);
+
+  return { conversation, isLoading, error, refetch: fetchConversation };
+}
+
+// Mission hooks
+export function useMissions() {
+  const [missions, setMissions] = useState<Mission[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<Error | null>(null);
+
+  const fetchMissions = async () => {
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      if (useMockApi()) {
+        // Mock missions
+        await new Promise((resolve) => setTimeout(resolve, 500));
+        setMissions([
+          {
+            id: 1,
+            conversation_id: 123,
+            query: "Find iPhone prices",
+            title: "Find iPhone prices",
+            status: "COMPLETED",
+            created_at: new Date().toISOString(),
+          },
+          {
+            id: 2,
+            conversation_id: 456,
+            query: "Research Tesla stock",
+            title: "Research Tesla stock",
+            status: "COMPLETED",
+            created_at: new Date().toISOString(),
+          },
+        ]);
+      } else {
+        const data = await api.get<Mission[]>("/chat/missions");
+        setMissions(data);
+      }
+    } catch (err) {
+      const error = err instanceof Error ? err : new Error("Unknown error");
+      setError(error);
+      console.error("Failed to fetch missions:", error);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    fetchMissions();
+  }, []);
+
+  return { missions, isLoading, error, refetch: fetchMissions };
+}
